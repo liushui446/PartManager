@@ -1,0 +1,13 @@
+PySide6>=6.5.0
+PyInstaller>=5.13.0
+
+# ═══════════════════════════════════════════════════════════
+# 推荐运行环境：conda env `myenv`（Python 3.11）
+# 
+#   conda activate myenv
+#   cd PartManager
+#   python main.py
+#
+# 如果 myenv 没有 PySide6，运行：
+#   pip install PySide6
+# ═══════════════════════════════════════════════════════════
