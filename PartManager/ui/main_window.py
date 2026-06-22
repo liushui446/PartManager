@@ -450,12 +450,9 @@ class MainWindow(QMainWindow):
         if not dr: return
 
         self._current_algo_table = dr["table"]
-        params = self._db.get_algorithm_params(dr["table"], self._current_component)
-        # 过滤出匹配 NG_ID 的参数
-        ng_id = dr["ng_id"]
-        matched = [p for p in params if p.get("No_Good_Id", "") == ng_id]
-        self._status_label.setText(f"编辑中: {self._current_component} → {dr['short']} ({len(matched)} 条)")
-        self._algo_editor.load_algorithm(dr["table"], matched)
+        # 只加载当前点击的那一条记录
+        self._status_label.setText(f"编辑中: {self._current_component} → {dr['short']} (NG:{dr['ng_id']})")
+        self._algo_editor.load_algorithm(dr["table"], [dr["full_row"]])
 
     def _on_save_algo(self):
         if not self._current_algo_table or not self._algo_editor.current_table:

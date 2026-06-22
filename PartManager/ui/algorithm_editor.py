@@ -197,8 +197,6 @@ class AlgorithmParamEditor(QScrollArea):
         cn_name = ALGORITHM_CN_NAMES.get(table_name, table_name)
         title = QLabel(f"⚙️  {cn_name}")
         title.setObjectName("paramTitle"); self._layout.addWidget(title)
-        info = QLabel(f"共 {len(params)} 条记录")
-        info.setObjectName("statusLabel"); self._layout.addWidget(info)
 
         # 分发到专用编辑器
         if "PIN" in table_name:
@@ -224,8 +222,12 @@ class AlgorithmParamEditor(QScrollArea):
 
     def _build_pin(self, params: List[Dict]):
         for idx, param in enumerate(params):
-            g = QGroupBox(f"记录 {idx + 1}")
+            g = QGroupBox()
             v = QVBoxLayout(g); v.setSpacing(8)
+            # NG ID
+            ng_id = param.get("No_Good_Id", "")
+            if ng_id:
+                v.addWidget(QLabel(f"NG编号: {ng_id}"))
 
             # 少锡
             lt = QGroupBox("少锡检测 — RGB + 灰度范围")
@@ -303,7 +305,7 @@ class AlgorithmParamEditor(QScrollArea):
 
     def _build_common(self, params: List[Dict]):
         for idx, param in enumerate(params):
-            g = QGroupBox(f"记录 {idx + 1}")
+            g = QGroupBox()
             v = QVBoxLayout(g); v.setSpacing(8)
 
             # RGB 颜色范围
@@ -352,7 +354,7 @@ class AlgorithmParamEditor(QScrollArea):
 
     def _build_short(self, params: List[Dict]):
         for idx, param in enumerate(params):
-            g = QGroupBox(f"记录 {idx + 1}")
+            g = QGroupBox()
             v = QVBoxLayout(g); v.setSpacing(8)
 
             # 核心参数
@@ -380,7 +382,7 @@ class AlgorithmParamEditor(QScrollArea):
 
     def _build_match(self, params: List[Dict]):
         for idx, param in enumerate(params):
-            g = QGroupBox(f"记录 {idx + 1}")
+            g = QGroupBox()
             v = QVBoxLayout(g); v.setSpacing(8)
 
             core = QGroupBox("图像处理参数")
@@ -406,7 +408,7 @@ class AlgorithmParamEditor(QScrollArea):
 
     def _build_generic_grouped(self, params: List[Dict], title_hint: str = ""):
         for idx, param in enumerate(params):
-            g = QGroupBox(f"记录 {idx + 1}")
+            g = QGroupBox()
             v = QVBoxLayout(g); v.setSpacing(4)
             filtered = {k: v2 for k, v2 in param.items() if k not in SKIP_COLUMNS}
             if filtered:
