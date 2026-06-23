@@ -18,6 +18,7 @@ from PySide6.QtGui import QFont, QPixmap, QImage, QAction
 from db import ComponentDatabase
 from ui.styles import GLOBAL_STYLE, TITLE_STYLE, STATUS_STYLE, CARD_STYLE, SUMMARY_STYLE, PARAM_PANEL_STYLE
 from ui.algorithm_editor import AlgorithmParamEditor, ALGORITHM_SHORT_NAMES
+from ui.toc_editor import TocAlgorithmEditor
 
 
 class MainWindow(QMainWindow):
@@ -201,8 +202,15 @@ class MainWindow(QMainWindow):
         lbl.setStyleSheet("font-weight:bold; font-size:13px; color:#58a6ff; padding:2px 4px;")
         layout.addWidget(lbl)
 
+        # 用 StackedWidget 切换通用编辑器 / TOC专用编辑器
+        from PySide6.QtWidgets import QStackedWidget
+        self._editor_stack = QStackedWidget()
         self._algo_editor = AlgorithmParamEditor()
-        layout.addWidget(self._algo_editor)
+        self._toc_editor = TocAlgorithmEditor()
+        self._editor_stack.addWidget(self._algo_editor)   # index 0: 通用
+        self._editor_stack.addWidget(self._toc_editor)     # index 1: TOC专用
+        self._editor_stack.setCurrentIndex(0)
+        layout.addWidget(self._editor_stack)
         return frame
 
     def _create_menu_bar(self):
@@ -483,7 +491,6 @@ class MainWindow(QMainWindow):
         ng_id = data["ng_id"]
         algo_name = self.ALGO_TYPE_NAMES.get(algo_type, f"Algo{algo_type}")
 
-        # 根据算法类型找到对应的算法参数表
         algo_table_map = {
             1: "TOC_ALGORITHM_PARAMETER", 2: "MATCH_ALGORITHM_PARAMETER",
             3: "HISTOGRAM_ALGORITHM_PARAMETER", 4: "OCV_ALGORITHM_PARAMETER",
@@ -496,11 +503,25 @@ class MainWindow(QMainWindow):
             17: "HOLE_ALGORITHM_PARAMETER", 18: "MACROSM_ALGORITHM_PARAMETER",
             19: "IC_ALGORITHM_PARAMETER", 20: "INSPECTION3D_ALGORITHM_PARAMETER",
         }
-        target_table = algo_table_map.get(algo_type)
-        if not target_table:
-            # 回退到 COMMON
-            target_table = "COMMON_ALGORITHM_PARAMETER"
+        target_table = algo_table_map.get(algo_type, "COMMON_ALGORITHM_PARAMETER")
 
+        # ── TOC 专用编辑器 ──
+        if algo_type == 1:
+            common_params = data["full_row"]  # COMMON 的行数据
+            toc_params_list = self._db.get_algorithm_params("TOC_ALGORITHM_PARAMETER",
+                                                             self._current_component)
+            toc_matched = [p for p in toc_params_list if p.get("No_Good_Id", "") == ng_id]
+            toc_params = toc_matched[0] if toc_matched else {}
+
+            self._editor_stack.setCurrentIndex(1)
+            self._toc_editor.load_params(common_params, toc_params)
+            self._current_algo_table = "TOC_ALGORITHM_PARAMETER"
+            self._status_label.setText(
+                f"编辑中: {self._current_component} → TOC (NG:{ng_id})")
+            return
+
+        # ── 通用编辑器 ──
+        self._editor_stack.setCurrentIndex(0)
         self._current_algo_table = target_table
         params = self._db.get_algorithm_params(target_table, self._current_component)
         matched = [p for p in params if p.get("No_Good_Id", "") == ng_id]
