@@ -65,15 +65,28 @@ class ComponentDatabase:
         self._package_types = sorted(set(c["PackageType"] for c in self._component_list))
 
     def _load_ng(self, conn: sqlite3.Connection):
-        """加载NG记录"""
-        rows = conn.execute(
-            "SELECT Component_Name, No_Good_Id FROM COMPONENT_NG ORDER BY Component_Name, No_Good_Id"
-        ).fetchall()
+        """加载NG记录（含ROI信息）"""
+        rows = conn.execute("""
+            SELECT Component_Name, No_Good_Id, No_Good_Type, Application_Type,
+                   Roi_Width, Roi_Height, Roi_Position_x, Roi_Position_y,
+                   Aoi_Angle, Resolution, Link_Flag, Link_Ng_Id,
+                   NG_Image_Width, NG_Image_Height
+            FROM COMPONENT_NG ORDER BY Component_Name, No_Good_Id
+        """).fetchall()
         self._ng_records = [dict(r) for r in rows]
         self._ng_by_component = {}
+        self._ng_roi = {}  # key: (comp_name, ng_id) → roi dict
         for r in self._ng_records:
             name = r["Component_Name"]
             self._ng_by_component.setdefault(name, []).append(r)
+            key = (name, r["No_Good_Id"])
+            self._ng_roi[key] = {
+                "x": r.get("Roi_Position_x", 0) or 0,
+                "y": r.get("Roi_Position_y", 0) or 0,
+                "w": r.get("Roi_Width", 0) or 0,
+                "h": r.get("Roi_Height", 0) or 0,
+                "angle": r.get("Aoi_Angle", 0) or 0,
+            }
 
     def _load_algorithm_params(self, conn: sqlite3.Connection):
         """加载所有算法参数表"""
@@ -128,6 +141,10 @@ class ComponentDatabase:
 
     def get_ng_records(self, component_name: str) -> List[Dict[str, Any]]:
         return self._ng_by_component.get(component_name, [])
+
+    def get_ng_roi(self, component_name: str, ng_id: str) -> Dict[str, float]:
+        """获取NG的ROI信息"""
+        return self._ng_roi.get((component_name, ng_id), {"x":0,"y":0,"w":0,"h":0,"angle":0})
 
     def get_all_ng_records(self) -> List[Dict[str, Any]]:
         return self._ng_records

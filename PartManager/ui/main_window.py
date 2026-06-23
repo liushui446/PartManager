@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit, QAbstractItemView, QSizePolicy, QMenuBar, QMenu,
 )
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QPixmap, QImage, QAction
+from PySide6.QtGui import QFont, QPixmap, QImage, QAction, QPainter, QPen, QColor
 
 from db import ComponentDatabase
 from ui.styles import GLOBAL_STYLE, TITLE_STYLE, STATUS_STYLE, CARD_STYLE, SUMMARY_STYLE, PARAM_PANEL_STYLE
@@ -477,12 +477,95 @@ class MainWindow(QMainWindow):
             self._populate_algor_table(comp_name, list(ng_groups.keys())[0])
 
     def _on_ng_clicked(self, row: int, col: int):
-        """点击检测项行 → 刷新下方算法参数列表"""
+        """点击检测项行 → 刷新下方算法参数列表，同时在模板图上绘制红色ROI框"""
         item = self._ng_table.item(row, 0)
         if not item: return
         data = item.data(Qt.UserRole)
         if not data: return
-        self._populate_algor_table(self._current_component, data["ng_id"])
+        ng_id = data["ng_id"]
+        self._populate_algor_table(self._current_component, ng_id)
+        # 绘制 ROI
+        self._show_component_image_with_roi(self._current_component, ng_id)
+
+    def _show_component_image_with_roi(self, comp_name: str, ng_id: str):
+        """显示模板图像并绘制红色ROI框
+           BD001(偏移)的ROI中心=图像中心，其他NG相对于BD001偏移"""
+        comp = self._db.get_component_by_name(comp_name)
+        if not comp: return
+
+        # 获取分辨率
+        ngs = self._db.get_ng_records(comp_name)
+        resolution = 15.0
+        for ng in ngs:
+            if ng.get("Resolution"):
+                resolution = float(ng["Resolution"])
+                break
+        factor = 1000.0 / resolution if resolution > 0 else 1.0
+
+        # BD001(偏移)的ROI作为参考中心
+        bd001_roi = self._db.get_ng_roi(comp_name, "BD001")
+        has_bd001 = bd001_roi["w"] > 0
+
+        # 当前NG的ROI
+        current_roi = self._db.get_ng_roi(comp_name, ng_id)
+        if not current_roi["w"] and not current_roi["h"]:
+            return
+
+        # 加载图像
+        for blob_key in ("Component_Image", "HG_Image"):
+            blob = comp.get(blob_key)
+            if not blob: continue
+            try:
+                w = int(comp.get("Component_Image_Width", 0))
+                h = int(comp.get("Component_Image_Height", 0))
+                if w > 0 and h > 0 and len(blob) == w * h * 3:
+                    img = QImage(bytes(blob), w, h, w * 3, QImage.Format_RGB888)
+                else:
+                    img = QImage.fromData(bytes(blob))
+                if img.isNull(): continue
+
+                mw = max(self._image_label.width() - 16, 200)
+                mh = max(self._image_label.height() - 16, 100)
+                scaled = img.scaled(mw, mh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                pixmap = QPixmap.fromImage(scaled)
+
+                sx = scaled.width() / img.width() if img.width() else 1
+                sy = scaled.height() / img.height() if img.height() else 1
+
+                # BD001中心=图像中心；其他NG=图像中心+(当前ROI偏移-BD001偏移)
+                img_cx = w / 2.0
+                img_cy = h / 2.0
+
+                if has_bd001 and ng_id != "BD001":
+                    dx_mm = current_roi["x"] - bd001_roi["x"]
+                    dy_mm = current_roi["y"] - bd001_roi["y"]
+                    cx_px = img_cx + dx_mm * factor
+                    cy_px = img_cy + dy_mm * factor
+                else:
+                    cx_px = img_cx + current_roi["x"] * factor
+                    cy_px = img_cy + current_roi["y"] * factor
+
+                # 左上角=中心-半宽高
+                rw_px = current_roi["w"] * factor
+                rh_px = current_roi["h"] * factor
+
+                if rw_px > 0 and rh_px > 0:
+                    painter = QPainter(pixmap)
+                    painter.setPen(QPen(QColor(255, 0, 0), 2))
+                    rx = (cx_px - rw_px / 2) * sx
+                    ry = (cy_px - rh_px / 2) * sy
+                    painter.drawRect(int(rx), int(ry), int(rw_px * sx), int(rh_px * sy))
+                    painter.setPen(QPen(QColor(255, 200, 0), 1))
+                    painter.drawText(int(rx), max(0, int(ry) - 4), f"ROI {ng_id}")
+                    painter.end()
+
+                self._image_label.setPixmap(pixmap)
+                self._image_label.setAlignment(Qt.AlignCenter)
+                return
+            except Exception:
+                continue
+
+        self._image_label.setText("无图像数据")
 
     def _populate_algor_table(self, comp_name: str, ng_id: str):
         """下方算法参数列表: 每行=一个AlgorithmType，参考 RefCompAlgorTable"""
