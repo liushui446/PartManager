@@ -248,7 +248,9 @@ class MainWindow(QMainWindow):
         components = self._db.get_all_components()
         pkg_items: dict = {}
         for pkg in self._db.get_package_types():
-            item = QTreeWidgetItem([pkg])
+            cn = self.PACKAGE_CN.get(pkg, pkg)
+            item = QTreeWidgetItem([cn])
+            item.setData(0, Qt.UserRole, pkg)  # 存原始英文名
             item.setFlags(item.flags() | Qt.ItemIsEnabled)
             f = QFont(); f.setBold(True); item.setFont(0, f)
             self._tree.addTopLevelItem(item)
@@ -259,7 +261,8 @@ class MainWindow(QMainWindow):
                 child = QTreeWidgetItem([c["Component_Name"]])
                 child.setData(0, Qt.UserRole, c["Component_Name"])
                 w, h = c.get("Component_Width", 0) or 0, c.get("Component_Height", 0) or 0
-                child.setToolTip(0, f"名称: {c['Component_Name']}\n封装: {pkg}\n尺寸: {w:.3f}×{h:.3f} mm\n模板: {'✓' if c.get('Template_Flag') else '✗'}")
+                cn_pkg = self.PACKAGE_CN.get(pkg, pkg)
+                child.setToolTip(0, f"名称: {c['Component_Name']}\n封装: {cn_pkg}\n尺寸: {w:.3f}×{h:.3f} mm")
                 pkg_items[pkg].addChild(child)
         self._tree.expandAll()
 
@@ -296,7 +299,7 @@ class MainWindow(QMainWindow):
         if not comp: return
         fields = [
             ("名称", comp.get("Component_Name", "")),
-            ("封装类型", comp.get("PackageType", "")),
+            ("封装类型", self.PACKAGE_CN.get(comp.get("PackageType", ""), comp.get("PackageType", ""))),
             ("宽度", f"{comp.get('Component_Width', 0):.4f} mm"),
             ("高度", f"{comp.get('Component_Height', 0):.4f} mm"),
             ("裁剪区 XY", f"({comp.get('Crop_Area_X', 0):.1f}, {comp.get('Crop_Area_Y', 0):.1f})"),
@@ -351,9 +354,34 @@ class MainWindow(QMainWindow):
     #  总标准表 & 分项检测项表
     # ═════════════════════════════════════════════════════════════
 
-    # 算法类型名称映射
-    ALGO_TYPE_NAMES = {2: "Match", 13: "TOC", 14: "OCV", 1: "定位", 3: "少锡", 4: "错件"}
-    DEFECT_TYPE_NAMES = {1: "偏移", 2: "少锡", 3: "错件", 4: "极性", 5: "其他"}
+    # 封装类型→中文（参考原C++: CompoEnum2Qstring）
+    PACKAGE_CN = {
+        "CHIP_R": "电阻", "CHIP_C": "电容", "DIODE": "二极管",
+        "TR": "三极管", "MELF": "色环电阻", "SOP": "SOP", "QFP": "QFP",
+        "BGA": "BGA", "LED": "LED", "PLUGINUNIT": "插件",
+        "SINGLERECT": "单框", "SOLDERJOINT": "焊点", "OTHER": "其它",
+    }
+
+    # 算法类型枚举→名称（参考原C++: m_qstrAlgorithmType，从1开始）
+    # 验证: BD001(偏移)+AlgoType2=Match, PS001(少锡)+AlgoType1=TOC, WP001(错件)+AlgoType4=OCV
+    ALGO_TYPE_NAMES = {
+        1: "TOC", 2: "Match", 3: "Histogram", 4: "OCV",
+        5: "Compare", 6: "Distance", 7: "Glue", 8: "Length",
+        9: "Padplace", 10: "PIN", 11: "Pole", 12: "Short",
+        13: "Match2", 14: "Other", 15: "ALOffset", 16: "Crest",
+        17: "Hole", 18: "MacroSM", 19: "IC", 20: "Inspection3D",
+    }
+
+    # 缺陷类型枚举→中文（参考原C++: DefectTypeConvertQStr，从1开始）
+    # 验证: BD001(偏移)=1, MP001(缺件)=2, WP001(错件)=3, PS001(少锡)=4
+    DEFECT_TYPE_NAMES = {
+        1: "偏移", 2: "缺件", 3: "错件", 4: "少锡",
+        5: "空焊", 6: "反向", 7: "旋转", 8: "异物",
+        9: "损坏", 10: "多锡", 11: "多件", 12: "虚焊",
+        13: "溢胶", 14: "起翘", 15: "短路", 16: "立碑",
+        17: "反白", 18: "漏铜", 19: "锡少", 20: "全检",
+        21: "润湿不良", 22: "侧立",
+    }
 
     def _populate_master_table(self, comp_name: str):
         """填充上方总标准表：从 COMMON_ALGORITHM_PARAMETER 载入"""
