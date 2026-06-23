@@ -24,8 +24,10 @@ from ui.editors.short_editor import ShortEditor
 from ui.editors.ocv_editor import OcvEditor
 from ui.editors.ocr_editor import OcrEditor
 from ui.editors.other_editor import OtherEditor
+from ui.editors.pin_editor import PinEditor
 from ui.editors.match_editor import MatchEditor
 from ui.editors.match2_editor import Match2Editor
+from ui.editors.pin_editor import PinEditor
 
 
 class MainWindow(QMainWindow):
@@ -241,7 +243,7 @@ class MainWindow(QMainWindow):
             5: AlgorithmParamEditor,   # Compare
             7: AlgorithmParamEditor,   # Glue
             8: AlgorithmParamEditor,   # Length
-            10: AlgorithmParamEditor,  # PIN
+            10: PinEditor,            # PIN
             12: ShortEditor,           # Short
             13: Match2Editor,          # Match2
             14: OtherEditor,           # Other

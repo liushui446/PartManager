@@ -2,6 +2,8 @@
 元器件模板库管理系统 - 算法参数编辑器（Slider/CheckBox/RadioButton 版）
 """
 
+from ui.range_slider import RangeSlider
+
 from typing import Dict, List, Any
 
 from PySide6.QtWidgets import (
@@ -208,9 +210,49 @@ class AlgorithmParamEditor(QScrollArea):
                 ng_lbl.setStyleSheet("color:#8b949e; font-size:11px;")
                 grid.addWidget(ng_lbl, 0, 0, 1, 4)
 
+            # 检测 High/Low 配对
+            high_low_pairs = set()
+            all_keys = list(param.keys())
+            for k in all_keys:
+                if k.endswith("_Low") and k.replace("_Low", "_High") in param:
+                    base = k[:-4]
+                    high_low_pairs.add(base)
+            skip_keys = set()
+            for base in high_low_pairs:
+                skip_keys.add(base + "_Low")
+                skip_keys.add(base + "_High")
+
             row = 1
             for key, value in param.items():
                 if key in SKIP_COLUMNS:
+                    continue
+
+                # High/Low 配对 → 一个双把手 RangeSlider
+                if key.endswith("_Low") and key[:-4] in high_low_pairs:
+                    base = key[:-4]
+                    lo_val = int(param.get(base + "_Low", 0) or 0)
+                    hi_val = int(param.get(base + "_High", 255) or 255)
+                    lo, hi = 0, 255
+                    if "Gray" in base: lo, hi = 0, 255
+                    elif "Red" in base or "Green" in base or "Blue" in base: lo, hi = 0, 180
+                    elif "Judge" in base: lo, hi = 0, 255
+                    elif "Retrun" in base or "Return" in base: lo, hi = 0, 9999
+                    else: lo, hi = 0, 255
+
+                    rs = RangeSlider()
+                    rs.setMinimum(lo); rs.setMaximum(hi)
+                    rs.setLowerValue(lo_val); rs.setUpperValue(hi_val)
+
+                    cn = FIELD_CN.get(base + "_Low", base)
+                    lbl = QLabel(cn.replace("下限", "").replace("Low", "").strip())
+                    lbl.setObjectName("paramLabel")
+                    grid.addWidget(lbl, row, 0)
+                    grid.addWidget(rs, row, 1, 1, 3)
+                    self._widgets[f"{idx}_{base}_Low"] = rs  # store for collect
+                    row += 1
+                    continue
+
+                if key in skip_keys:
                     continue
 
                 cn_label = FIELD_CN.get(key, key)
@@ -218,9 +260,7 @@ class AlgorithmParamEditor(QScrollArea):
                 lbl.setObjectName("paramLabel")
 
                 wid = self._create_widget(key, value, idx, group)
-                # wid can be a single widget or a layout-wrapped widget
                 if isinstance(wid, QWidget) and wid.layout():
-                    # layout-wrapped (e.g., slider+spin)
                     grid.addWidget(lbl, row, 0)
                     grid.addWidget(wid, row, 1, 1, 3)
                 elif isinstance(wid, QCheckBox):
@@ -331,6 +371,12 @@ class AlgorithmParamEditor(QScrollArea):
                     row[key] = w.text()
                 elif isinstance(w, QCheckBox):
                     row[key] = 1 if w.isChecked() else 0
+                elif isinstance(w, RangeSlider):
+                    # stored as base_Low key, we need both High and Low
+                    if key.endswith("_Low"):
+                        base = key[:-4]
+                        row[base + "_Low"] = w.lowerValue()
+                        row[base + "_High"] = w.upperValue()
                 else:
                     row[key] = value
             result.append(row)
