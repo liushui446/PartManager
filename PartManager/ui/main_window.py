@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QSplitter, QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
     QTabWidget, QLabel, QPushButton, QStatusBar,
-    QHeaderView, QFrame, QGridLayout, QGroupBox, QMessageBox,
+    QHeaderView, QFrame, QGroupBox, QMessageBox, QCheckBox,
     QLineEdit, QAbstractItemView, QSizePolicy, QMenuBar, QMenu,
 )
 from PySide6.QtCore import Qt
@@ -148,36 +148,36 @@ class MainWindow(QMainWindow):
         info_row.addWidget(self._image_label)
         layout.addLayout(info_row)
 
-        # ── 上方：元件总标准表 ──
-        master_lbl = QLabel("📋 元件总标准表（点击行查看分项检测项）")
-        master_lbl.setStyleSheet("font-weight:bold; font-size:12px; color:#58a6ff; padding:1px 4px;")
-        layout.addWidget(master_lbl)
+        # ── 上方：检测项列表（参考 RefCompoNGTable） ──
+        ng_lbl = QLabel("📋 检测项列表（点击行查看算法参数）")
+        ng_lbl.setStyleSheet("font-weight:bold; font-size:12px; color:#58a6ff; padding:1px 4px;")
+        layout.addWidget(ng_lbl)
 
-        self._master_table = QTableWidget()
-        self._master_table.setColumnCount(8)
-        self._master_table.setHorizontalHeaderLabels(
-            ["NG_ID", "算法", "Use", "ROI_X", "ROI_Y", "角度", "缺陷类型", "表达式"])
-        self._master_table.horizontalHeader().setStretchLastSection(True)
-        self._master_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._master_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._master_table.verticalHeader().setVisible(False)
-        self._master_table.setMaximumHeight(140)
-        layout.addWidget(self._master_table)
+        self._ng_table = QTableWidget()
+        self._ng_table.setColumnCount(5)
+        self._ng_table.setHorizontalHeaderLabels(
+            ["检测项", "NG_ID", "类型", "应用模式", "当前使用算法"])
+        self._ng_table.horizontalHeader().setStretchLastSection(True)
+        self._ng_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._ng_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._ng_table.verticalHeader().setVisible(False)
+        self._ng_table.setMaximumHeight(140)
+        layout.addWidget(self._ng_table)
 
-        # ── 下方：分项检测项表 ──
-        detail_lbl = QLabel("🔍 分项检测项表（点击行编辑算法参数）")
-        detail_lbl.setStyleSheet("font-weight:bold; font-size:12px; color:#58a6ff; padding:1px 4px;")
-        layout.addWidget(detail_lbl)
+        # ── 下方：算法参数列表（参考 RefCompAlgorTable） ──
+        algor_lbl = QLabel("⚙️ 算法参数列表（点击行编辑参数，勾选Use设置默认算法）")
+        algor_lbl.setStyleSheet("font-weight:bold; font-size:12px; color:#58a6ff; padding:1px 4px;")
+        layout.addWidget(algor_lbl)
 
-        self._detail_table = QTableWidget()
-        self._detail_table.setColumnCount(5)
-        self._detail_table.setHorizontalHeaderLabels(
-            ["检测项", "子名称(NG)", "算法表", "NG_ID", "参数预览"])
-        self._detail_table.horizontalHeader().setStretchLastSection(True)
-        self._detail_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self._detail_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self._detail_table.verticalHeader().setVisible(False)
-        layout.addWidget(self._detail_table)
+        self._algor_table = QTableWidget()
+        self._algor_table.setColumnCount(10)
+        self._algor_table.setHorizontalHeaderLabels(
+            ["元件名", "元件类型", "NG类型", "NG_ID", "算法", "Use", "ROI_X", "ROI_Y", "ROI_W", "ROI_H"])
+        self._algor_table.horizontalHeader().setStretchLastSection(True)
+        self._algor_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._algor_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._algor_table.verticalHeader().setVisible(False)
+        layout.addWidget(self._algor_table)
 
         # 按钮
         btn_row = QHBoxLayout()
@@ -222,8 +222,8 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         self._tree.itemClicked.connect(self._on_tree_clicked)
-        self._master_table.itemClicked.connect(self._on_master_clicked)
-        self._detail_table.itemClicked.connect(self._on_detail_clicked)
+        self._ng_table.cellClicked.connect(self._on_ng_clicked)
+        self._algor_table.cellClicked.connect(self._on_algor_clicked)
         self._search_input.textChanged.connect(self._on_search)
         self._btn_save_algo.clicked.connect(self._on_save_algo)
         self._btn_export.clicked.connect(self._export_csv)
@@ -278,9 +278,9 @@ class MainWindow(QMainWindow):
         self._status_label.setText(f"已选择: {comp_name}")
         self._show_component_info(comp_name)
         self._show_component_image(comp_name)
-        self._populate_master_table(comp_name)
-        self._detail_table.setRowCount(0)
-        self._algo_editor._show_placeholder("点击上方总标准表行→查看分项检测项→点击分项行编辑参数")
+        self._populate_ng_table(comp_name)
+        self._algor_table.setRowCount(0)
+        self._algo_editor._show_placeholder("点击上方检测项 → 查看算法参数 → 点击参数行编辑")
 
     def _on_search(self, text: str):
         text = text.strip().lower()
@@ -351,19 +351,17 @@ class MainWindow(QMainWindow):
         self._image_label.setText("无图像数据")
 
     # ═════════════════════════════════════════════════════════════
-    #  总标准表 & 分项检测项表
+    #  检测项列表 & 算法参数列表（参考 RefCompoNGTable / RefCompAlgorTable）
     # ═════════════════════════════════════════════════════════════
 
-    # 封装类型→中文（参考原C++: CompoEnum2Qstring）
+    # 封装类型→中文
     PACKAGE_CN = {
         "CHIP_R": "电阻", "CHIP_C": "电容", "DIODE": "二极管",
         "TR": "三极管", "MELF": "色环电阻", "SOP": "SOP", "QFP": "QFP",
         "BGA": "BGA", "LED": "LED", "PLUGINUNIT": "插件",
         "SINGLERECT": "单框", "SOLDERJOINT": "焊点", "OTHER": "其它",
     }
-
-    # 算法类型枚举→名称（参考原C++: m_qstrAlgorithmType，从1开始）
-    # 验证: BD001(偏移)+AlgoType2=Match, PS001(少锡)+AlgoType1=TOC, WP001(错件)+AlgoType4=OCV
+    # 算法类型枚举(1-based)→名称
     ALGO_TYPE_NAMES = {
         1: "TOC", 2: "Match", 3: "Histogram", 4: "OCV",
         5: "Compare", 6: "Distance", 7: "Glue", 8: "Length",
@@ -371,9 +369,7 @@ class MainWindow(QMainWindow):
         13: "Match2", 14: "Other", 15: "ALOffset", 16: "Crest",
         17: "Hole", 18: "MacroSM", 19: "IC", 20: "Inspection3D",
     }
-
-    # 缺陷类型枚举→中文（参考原C++: DefectTypeConvertQStr，从1开始）
-    # 验证: BD001(偏移)=1, MP001(缺件)=2, WP001(错件)=3, PS001(少锡)=4
+    # 缺陷类型枚举(1-based)→中文
     DEFECT_TYPE_NAMES = {
         1: "偏移", 2: "缺件", 3: "错件", 4: "少锡",
         5: "空焊", 6: "反向", 7: "旋转", 8: "异物",
@@ -383,108 +379,139 @@ class MainWindow(QMainWindow):
         21: "润湿不良", 22: "侧立",
     }
 
-    def _populate_master_table(self, comp_name: str):
-        """填充上方总标准表：从 COMMON_ALGORITHM_PARAMETER 载入"""
-        self._master_table.setRowCount(0)
+    def _populate_ng_table(self, comp_name: str):
+        """上方检测项列表: 每行=一个NG_ID，参考 RefCompoNGTable"""
+        self._ng_table.setRowCount(0)
         rows = self._db.get_algorithm_params("COMMON_ALGORITHM_PARAMETER", comp_name)
-        if not rows:
-            return
+        if not rows: return
 
-        # 按 NG_ID + Algorithm_Type 去重展示
-        seen = set()
-        display_rows = []
+        # 按 NG_ID 分组，每NG取 Use=1 的作为"当前使用算法"
+        ng_groups: dict = {}
         for r in rows:
-            key = (r.get("No_Good_Id", ""), r.get("Algorithm_Type", 0))
-            if key not in seen:
-                seen.add(key)
-                display_rows.append(r)
+            ng_id = r.get("No_Good_Id", "")
+            if ng_id not in ng_groups:
+                ng_groups[ng_id] = {"defect_type": r.get("Defect_Type", 0),
+                                    "use_algo": None, "all_algos": []}
+            ng_groups[ng_id]["all_algos"].append(r)
+            if r.get("Algorithm_Use_Flag"):
+                ng_groups[ng_id]["use_algo"] = r.get("Algorithm_Type", 0)
 
-        self._master_table.setRowCount(len(display_rows))
-        for i, r in enumerate(display_rows):
-            algo_type = r.get("Algorithm_Type", 0)
+        self._ng_table.setRowCount(len(ng_groups))
+        for i, (ng_id, gdata) in enumerate(ng_groups.items()):
+            dt = gdata["defect_type"]
+            defect_cn = self.DEFECT_TYPE_NAMES.get(dt, str(dt))
+            algo_type = gdata["use_algo"] or 0
             algo_name = self.ALGO_TYPE_NAMES.get(algo_type, str(algo_type))
-            use_flag = "✓" if r.get("Algorithm_Use_Flag") else "✗"
-            defect = self.DEFECT_TYPE_NAMES.get(r.get("Defect_Type", 0), str(r.get("Defect_Type", "")))
 
-            self._master_table.setItem(i, 0, QTableWidgetItem(str(r.get("No_Good_Id", ""))))
-            self._master_table.setItem(i, 1, QTableWidgetItem(algo_name))
-            self._master_table.setItem(i, 2, QTableWidgetItem(use_flag))
-            self._master_table.setItem(i, 3, QTableWidgetItem(str(r.get("Search_Scope_X", ""))))
-            self._master_table.setItem(i, 4, QTableWidgetItem(str(r.get("Search_Scope_Y", ""))))
-            self._master_table.setItem(i, 5, QTableWidgetItem(str(r.get("Search_Scope_Angle", ""))))
-            self._master_table.setItem(i, 6, QTableWidgetItem(defect))
-            self._master_table.setItem(i, 7, QTableWidgetItem(str(r.get("Error_Exp", ""))[:30]))
+            self._ng_table.setItem(i, 0, QTableWidgetItem(defect_cn))
+            self._ng_table.setItem(i, 1, QTableWidgetItem(ng_id))
+            self._ng_table.setItem(i, 2, QTableWidgetItem("Register"))
+            self._ng_table.setItem(i, 3, QTableWidgetItem("—"))
+            self._ng_table.setItem(i, 4, QTableWidgetItem(algo_name))
+            # 存储
+            self._ng_table.item(i, 0).setData(Qt.UserRole, {
+                "ng_id": ng_id, "defect_type": dt, "use_algo": algo_type})
 
-            # 存储完整数据
-            self._master_table.item(i, 0).setData(Qt.UserRole, r)
+        self._ng_table.resizeColumnsToContents()
+        if ng_groups:
+            self._ng_table.selectRow(0)
+            self._populate_algor_table(comp_name, list(ng_groups.keys())[0])
 
-        self._master_table.resizeColumnsToContents()
+    def _on_ng_clicked(self, row: int, col: int):
+        """点击检测项行 → 刷新下方算法参数列表"""
+        item = self._ng_table.item(row, 0)
+        if not item: return
+        data = item.data(Qt.UserRole)
+        if not data: return
+        self._populate_algor_table(self._current_component, data["ng_id"])
 
-    def _on_master_clicked(self, item: QTableWidgetItem):
-        """点击总标准表行 → 填充分项检测项表"""
-        row = item.row()
-        master_data = self._master_table.item(row, 0).data(Qt.UserRole)
-        if not master_data: return
+    def _populate_algor_table(self, comp_name: str, ng_id: str):
+        """下方算法参数列表: 每行=一个AlgorithmType，参考 RefCompAlgorTable"""
+        self._algor_table.setRowCount(0)
+        rows = self._db.get_algorithm_params("COMMON_ALGORITHM_PARAMETER", comp_name)
+        matched = [r for r in rows if r.get("No_Good_Id", "") == ng_id]
+        if not matched: return
 
-        ng_id = master_data.get("No_Good_Id", "")
-        comp_name = self._current_component
-        if not comp_name: return
+        pkg = self._current_component and self._db.get_component_by_name(comp_name)
+        pkg_cn = self.PACKAGE_CN.get(pkg.get("PackageType", ""), "") if pkg else ""
+        defect_type = matched[0].get("Defect_Type", 0)
+        defect_cn = self.DEFECT_TYPE_NAMES.get(defect_type, str(defect_type))
 
-        self._populate_detail_table(comp_name, ng_id)
+        # 去重: 每个 AlgorithmType 一行
+        seen, display = set(), []
+        for r in matched:
+            at = r.get("Algorithm_Type", 0)
+            if at not in seen:
+                seen.add(at)
+                display.append(r)
 
-    def _populate_detail_table(self, comp_name: str, ng_id: str):
-        """填充下方分项检测项表：所有匹配此 NG_ID 的算法表记录"""
-        self._detail_table.setRowCount(0)
-        algos = self._db.get_algorithms_for_component(comp_name)
-        if not algos: return
+        self._algor_table.setRowCount(len(display))
+        for i, r in enumerate(display):
+            at = r.get("Algorithm_Type", 0)
+            algo_name = self.ALGO_TYPE_NAMES.get(at, str(at))
+            use_flag = r.get("Algorithm_Use_Flag", 0)
 
-        detail_rows = []
-        for table_name, params in algos.items():
-            for p in params:
-                if p.get("No_Good_Id", "") == ng_id:
-                    short = ALGORITHM_SHORT_NAMES.get(table_name, table_name)
-                    # 参数预览：取前3个非基础字段的值
-                    preview_parts = []
-                    for k, v in p.items():
-                        if k in ("Component_Name", "No_Good_Id"): continue
-                        preview_parts.append(f"{k}={v}")
-                        if len(preview_parts) >= 3: break
-                    preview = ", ".join(preview_parts) if preview_parts else "—"
+            self._algor_table.setItem(i, 0, QTableWidgetItem(comp_name))
+            self._algor_table.setItem(i, 1, QTableWidgetItem(pkg_cn))
+            self._algor_table.setItem(i, 2, QTableWidgetItem(defect_cn))
+            self._algor_table.setItem(i, 3, QTableWidgetItem(ng_id))
+            self._algor_table.setItem(i, 4, QTableWidgetItem(algo_name))
+            # Use checkbox
+            cb = QCheckBox()
+            cb.setChecked(bool(use_flag))
+            self._algor_table.setCellWidget(i, 5, cb)
+            self._algor_table.setItem(i, 6, QTableWidgetItem(str(r.get("Search_Scope_X", ""))))
+            self._algor_table.setItem(i, 7, QTableWidgetItem(str(r.get("Search_Scope_Y", ""))))
+            self._algor_table.setItem(i, 8, QTableWidgetItem("—"))
+            self._algor_table.setItem(i, 9, QTableWidgetItem("—"))
+            # 存储
+            self._algor_table.item(i, 0).setData(Qt.UserRole, {
+                "table": "COMMON_ALGORITHM_PARAMETER",
+                "algo_type": at, "ng_id": ng_id,
+                "full_row": r})
 
-                    detail_rows.append({
-                        "table": table_name,
-                        "short": short,
-                        "ng_id": ng_id,
-                        "preview": preview,
-                        "params": params,  # all params for this table
-                        "full_row": p,
-                    })
+        self._algor_table.resizeColumnsToContents()
 
-        self._detail_table.setRowCount(len(detail_rows))
-        for i, dr in enumerate(detail_rows):
-            self._detail_table.setItem(i, 0, QTableWidgetItem(dr["short"]))
-            self._detail_table.setItem(i, 1, QTableWidgetItem(dr["ng_id"]))
-            self._detail_table.setItem(i, 2, QTableWidgetItem(dr["table"]))
-            self._detail_table.setItem(i, 3, QTableWidgetItem(dr["ng_id"]))
-            self._detail_table.setItem(i, 4, QTableWidgetItem(dr["preview"]))
-            self._detail_table.item(i, 0).setData(Qt.UserRole, dr)
+    def _on_algor_clicked(self, row: int, col: int):
+        """点击算法参数行 → 加载对应算法表的具体参数到编辑器"""
+        item = self._algor_table.item(row, 0)
+        if not item: return
+        data = item.data(Qt.UserRole)
+        if not data: return
 
-        self._detail_table.resizeColumnsToContents()
+        algo_type = data["algo_type"]
+        ng_id = data["ng_id"]
+        algo_name = self.ALGO_TYPE_NAMES.get(algo_type, f"Algo{algo_type}")
 
-    def _on_detail_clicked(self, item: QTableWidgetItem):
-        """点击分项检测项行 → 加载算法编辑器"""
-        row = item.row()
-        dr = self._detail_table.item(row, 0).data(Qt.UserRole)
-        if not dr: return
+        # 根据算法类型找到对应的算法参数表
+        algo_table_map = {
+            1: "TOC_ALGORITHM_PARAMETER", 2: "MATCH_ALGORITHM_PARAMETER",
+            3: "HISTOGRAM_ALGORITHM_PARAMETER", 4: "OCV_ALGORITHM_PARAMETER",
+            5: "COMPARE_ALGORITHM_PARAMETER", 6: "DISTANCE_ALGORITHM_PARAMETER",
+            7: "GLUE_ALGORITHM_PARAMETER", 8: "LENGTH_ALGORITHM_PARAMETER",
+            9: "PADPLACE_ALGORITHM_PARAMETER", 10: "PIN_ALGORITHM_PARAMETER",
+            11: "POLE_ALGORITHM_PARAMETER", 12: "SHORT_ALGORITHM_PARAMETER",
+            13: "MATCH2_ALGORITHM_PARAMETER", 14: "OTHER_ALGORITHM_PARAMETER",
+            15: "ALOFFSET_ALGORITHM_PARAMETER", 16: "CREST_ALGORITHM_PARAMETER",
+            17: "HOLE_ALGORITHM_PARAMETER", 18: "MACROSM_ALGORITHM_PARAMETER",
+            19: "IC_ALGORITHM_PARAMETER", 20: "INSPECTION3D_ALGORITHM_PARAMETER",
+        }
+        target_table = algo_table_map.get(algo_type)
+        if not target_table:
+            # 回退到 COMMON
+            target_table = "COMMON_ALGORITHM_PARAMETER"
 
-        self._current_algo_table = dr["table"]
-        # 只加载当前点击的那一条记录
-        self._status_label.setText(f"编辑中: {self._current_component} → {dr['short']} (NG:{dr['ng_id']})")
-        self._algo_editor.load_algorithm(dr["table"], [dr["full_row"]])
+        self._current_algo_table = target_table
+        params = self._db.get_algorithm_params(target_table, self._current_component)
+        matched = [p for p in params if p.get("No_Good_Id", "") == ng_id]
+
+        self._status_label.setText(
+            f"编辑中: {self._current_component} → {algo_name} (NG:{ng_id})")
+        self._algo_editor.load_algorithm(target_table, matched)
 
     def _on_save_algo(self):
         if not self._current_algo_table or not self._algo_editor.current_table:
-            QMessageBox.information(self, "提示", "请先在分项检测项表中点击一行选择算法")
+            QMessageBox.information(self, "提示", "请先在算法参数列表中点击一行选择算法")
             return
         values = self._algo_editor.collect_values()
         QMessageBox.information(self, "参数收集完成",
