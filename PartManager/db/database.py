@@ -243,3 +243,117 @@ class ComponentDatabase:
             if r.get("No_Good_Id") == ng_id:
                 r.update(params)
                 break
+
+    # ─── 插入/删除 ──────────────────────────────────────────────
+
+    def _sync_ng_cache(self, component_name, ng_id, defect_type, app_type):
+        """同步NG缓存"""
+        record = {
+            "Component_Name": component_name, "No_Good_Id": ng_id,
+            "No_Good_Type": defect_type, "Application_Type": app_type,
+            "Roi_Width": 2.0, "Roi_Height": 2.0,
+            "Roi_Position_x": 0.0, "Roi_Position_y": 0.0,
+            "Aoi_Angle": 0.0, "Resolution": 15.0, "Link_Flag": 0,
+        }
+        self._ng_records.append(record)
+        self._ng_by_component.setdefault(component_name, []).append(record)
+        self._ng_roi[(component_name, ng_id)] = {"x": 0, "y": 0, "w": 2, "h": 2, "angle": 0}
+
+    def insert_ng(self, component_name: str, ng_id: str,
+                  defect_type: int, app_type: str = "10100"):
+        """插入新的NG记录到COMPONENT_NG，DB+缓存"""
+        with self._connect_rw() as conn:
+            conn.execute("""
+                INSERT INTO COMPONENT_NG
+                (Component_Name, No_Good_Id, No_Good_Type, Application_Type,
+                 Roi_Width, Roi_Height, Roi_Position_x, Roi_Position_y,
+                 Aoi_Angle, Resolution, Link_Flag)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (component_name, ng_id, defect_type, app_type,
+                  2.0, 2.0, 0.0, 0.0, 0.0, 15.0, 0))
+            conn.commit()
+        self._sync_ng_cache(component_name, ng_id, defect_type, app_type)
+
+    def insert_ng_memonly(self, component_name: str, ng_id: str,
+                          defect_type: int, app_type: str = "10100"):
+        """插入新的NG — 仅缓存，不写DB"""
+        self._sync_ng_cache(component_name, ng_id, defect_type, app_type)
+
+    def _sync_algo_cache(self, component_name, ng_id, defect_type, algo_type):
+        row = {"Component_Name": component_name, "No_Good_Id": ng_id,
+               "Defect_Type": defect_type, "Algorithm_Type": algo_type,
+               "Algorithm_Use_Flag": 1, "Color_Channel": 7, "Color_Method": 1,
+               "Detection_Type": 1, "Search_Scope_X": 0.5, "Search_Scope_Y": 0.5,
+               "Search_Scope_Angle": 6.0,
+               "Color_Red_High": 255, "Color_Red_Low": 0,
+               "Color_Green_High": 255, "Color_Green_Low": 0,
+               "Color_Blue_High": 255, "Color_Blue_Low": 0,
+               "Color_Gray_High": 255, "Color_Gray_Low": 0,
+               "Retrun_Value_High": 0, "Retrun_Value_Low": 0,
+               "Return_Value": 0, "Error_Exp": "OK"}
+        self._algorithm_params.setdefault("COMMON_ALGORITHM_PARAMETER", {})
+        self._algorithm_params["COMMON_ALGORITHM_PARAMETER"].setdefault(
+            component_name, []).append(row)
+
+    def insert_algorithm_to_common(self, component_name: str, ng_id: str,
+                                    defect_type: int, algo_type: int):
+        """插入新的算法记录到COMMON_ALGORITHM_PARAMETER，DB+缓存"""
+        with self._connect_rw() as conn:
+            conn.execute("""
+                INSERT INTO COMMON_ALGORITHM_PARAMETER
+                (Component_Name, No_Good_Id, Defect_Type, Algorithm_Type,
+                 Algorithm_Use_Flag, Color_Channel, Color_Method,
+                 Detection_Type, Search_Scope_X, Search_Scope_Y,
+                 Search_Scope_Angle, Color_Red_High, Color_Red_Low,
+                 Color_Green_High, Color_Green_Low, Color_Blue_High,
+                 Color_Blue_Low, Color_Gray_High, Color_Gray_Low,
+                 Retrun_Value_High, Retrun_Value_Low, Return_Value, Error_Exp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (component_name, ng_id, defect_type, algo_type,
+                  1, 7, 1, 1, 0.5, 0.5, 6.0,
+                  255, 0, 255, 0, 255, 0, 255, 0,
+                  0, 0, 0, "OK"))
+            conn.commit()
+        self._sync_algo_cache(component_name, ng_id, defect_type, algo_type)
+
+    def insert_algorithm_memonly(self, component_name: str, ng_id: str,
+                                  defect_type: int, algo_type: int):
+        """插入新的算法 — 仅缓存，不写DB"""
+        self._sync_algo_cache(component_name, ng_id, defect_type, algo_type)
+
+    def delete_ng(self, component_name: str, ng_id: str):
+        """删除NG记录及其关联的算法参数"""
+        with self._connect_rw() as conn:
+            conn.execute(
+                "DELETE FROM COMPONENT_NG WHERE Component_Name=? AND No_Good_Id=?",
+                (component_name, ng_id))
+            conn.execute(
+                "DELETE FROM COMMON_ALGORITHM_PARAMETER WHERE Component_Name=? AND No_Good_Id=?",
+                (component_name, ng_id))
+            conn.commit()
+        # 更新缓存
+        self._ng_records = [r for r in self._ng_records
+                            if not (r["Component_Name"] == component_name and r["No_Good_Id"] == ng_id)]
+        if component_name in self._ng_by_component:
+            self._ng_by_component[component_name] = [
+                r for r in self._ng_by_component[component_name]
+                if r["No_Good_Id"] != ng_id]
+        self._ng_roi.pop((component_name, ng_id), None)
+        comp_map = self._algorithm_params.get("COMMON_ALGORITHM_PARAMETER", {})
+        if component_name in comp_map:
+            comp_map[component_name] = [
+                r for r in comp_map[component_name] if r["No_Good_Id"] != ng_id]
+
+    def delete_algorithm_from_common(self, component_name: str, ng_id: str, algo_type: int):
+        """从COMMON_ALGORITHM_PARAMETER删除指定算法"""
+        with self._connect_rw() as conn:
+            conn.execute("""
+                DELETE FROM COMMON_ALGORITHM_PARAMETER
+                WHERE Component_Name=? AND No_Good_Id=? AND Algorithm_Type=?
+            """, (component_name, ng_id, algo_type))
+            conn.commit()
+        comp_map = self._algorithm_params.get("COMMON_ALGORITHM_PARAMETER", {})
+        if component_name in comp_map:
+            comp_map[component_name] = [
+                r for r in comp_map[component_name]
+                if not (r["No_Good_Id"] == ng_id and r.get("Algorithm_Type") == algo_type)]

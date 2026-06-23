@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QTabWidget, QLabel, QPushButton, QStatusBar,
     QHeaderView, QFrame, QGroupBox, QMessageBox, QCheckBox,
     QLineEdit, QAbstractItemView, QSizePolicy, QMenuBar, QMenu,
+    QInputDialog, QDialog, QDialogButtonBox, QComboBox, QFormLayout,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QPixmap, QImage, QAction, QPainter, QPen, QColor
@@ -36,6 +37,9 @@ class MainWindow(QMainWindow):
         self._db = ComponentDatabase(db_path)
         self._current_component: Optional[str] = None
         self._current_algo_table: Optional[str] = None
+        # 暂存列表：新建的NG和算法，更新数据库时一次性写入
+        self._pending_ngs: list = []
+        self._pending_algos: list = []
 
         self._init_ui()
         self._apply_styles()
@@ -191,10 +195,14 @@ class MainWindow(QMainWindow):
 
         # 按钮
         btn_row = QHBoxLayout()
-        btn_row.addStretch()
+        self._btn_new_ng = QPushButton("➕ 新建NG")
+        self._btn_new_algo = QPushButton("➕ 新建算法")
         self._btn_save_db = QPushButton("💾 更新数据库")
         self._btn_save_db.setObjectName("btnPrimary")
         self._btn_export = QPushButton("📊 导出CSV")
+        btn_row.addWidget(self._btn_new_ng)
+        btn_row.addWidget(self._btn_new_algo)
+        btn_row.addStretch()
         btn_row.addWidget(self._btn_save_db)
         btn_row.addWidget(self._btn_export)
         layout.addLayout(btn_row)
@@ -280,6 +288,8 @@ class MainWindow(QMainWindow):
         self._ng_table.cellClicked.connect(self._on_ng_clicked)
         self._algor_table.cellClicked.connect(self._on_algor_clicked)
         self._search_input.textChanged.connect(self._on_search)
+        self._btn_new_ng.clicked.connect(self._on_new_ng)
+        self._btn_new_algo.clicked.connect(self._on_new_algo)
         self._btn_save_db.clicked.connect(self._save_to_db)
         self._btn_export.clicked.connect(self._export_csv)
 
@@ -441,19 +451,39 @@ class MainWindow(QMainWindow):
     def _populate_ng_table(self, comp_name: str):
         """上方检测项列表: 每行=一个NG_ID，参考 RefCompoNGTable"""
         self._ng_table.setRowCount(0)
-        rows = self._db.get_algorithm_params("COMMON_ALGORITHM_PARAMETER", comp_name)
-        if not rows: return
 
-        # 按 NG_ID 分组，每NG取 Use=1 的作为"当前使用算法"
+        # 从 COMMON 表获取已有算法关联的NG
+        rows = self._db.get_algorithm_params("COMMON_ALGORITHM_PARAMETER", comp_name)
+
+        # 从 COMPONENT_NG 缓存获取所有NG（含新建的）
+        ng_records = self._db.get_ng_records(comp_name)
+        ng_ids_from_cache = {r["No_Good_Id"] for r in ng_records}
+
+        # 合并：NG_ID 来自 COMPONENT_NG 缓存，算法信息来自 COMMON
         ng_groups: dict = {}
+        # 先按 COMMON 数据分组（已有算法关联）
         for r in rows:
             ng_id = r.get("No_Good_Id", "")
             if ng_id not in ng_groups:
                 ng_groups[ng_id] = {"defect_type": r.get("Defect_Type", 0),
-                                    "use_algo": None, "all_algos": []}
-            ng_groups[ng_id]["all_algos"].append(r)
+                                    "use_algo": None}
             if r.get("Algorithm_Use_Flag"):
                 ng_groups[ng_id]["use_algo"] = r.get("Algorithm_Type", 0)
+        # 补充没有 COMMON 记录的NG（新建的或只有COMPONENT_NG记录的）
+        for ngr in ng_records:
+            ng_id = ngr["No_Good_Id"]
+            if ng_id not in ng_groups:
+                ng_groups[ng_id] = {
+                    "defect_type": ngr.get("No_Good_Type", 1),
+                    "use_algo": None,
+                }
+
+        self._ng_table.setRowCount(len(ng_groups))
+        for i, (ng_id, gdata) in enumerate(ng_groups.items()):
+            dt = gdata["defect_type"]
+            defect_cn = self.DEFECT_TYPE_NAMES.get(dt, str(dt))
+            algo_type = gdata["use_algo"] or 0
+            algo_name = self.ALGO_TYPE_NAMES.get(algo_type, str(algo_type))
 
         self._ng_table.setRowCount(len(ng_groups))
         for i, (ng_id, gdata) in enumerate(ng_groups.items()):
@@ -715,65 +745,151 @@ class MainWindow(QMainWindow):
         self._algo_ng_badge.setText(f"NG:{ng_id}")
         self._status_label.setText(f"编辑中: {self._current_component} → {algo_name} (NG:{ng_id})")
 
-    def _save_to_db(self):
-        """将当前编辑器的修改写回数据库"""
-        if not self._current_algo_table or not self._current_component:
-            QMessageBox.information(self, "提示", "请先选择元器件和算法参数")
+    def _on_new_ng(self):
+        """新建检测项(NG) — 暂存内存，刷新UI"""
+        if not self._current_component:
+            QMessageBox.information(self, "提示", "请先在元器件树中选择一个元器件")
             return
+
+        defect_names = {v: k for k, v in self.DEFECT_TYPE_NAMES.items()}
+        items = list(defect_names.keys())
+        name, ok = QInputDialog.getItem(self, "新建检测项", "选择缺陷类型:", items, 0, False)
+        if not ok or not name:
+            return
+        defect_type = defect_names[name]
+
+        # 自动生成NG_ID（从已有记录+暂存中取最大序号）
+        existing = self._db.get_ng_records(self._current_component)
+        existing_ids = {r["No_Good_Id"] for r in existing}
+        existing_ids.update(ng[1] for ng in self._pending_ngs
+                            if ng[0] == self._current_component)
+        max_n = 0
+        for eid in existing_ids:
+            if eid.startswith("NG"):
+                try: max_n = max(max_n, int(eid[2:]))
+                except: pass
+        ng_id = f"NG{max_n + 1:03d}"
+
+        # 暂存到内存缓存（不写DB）
+        self._db.insert_ng_memonly(self._current_component, ng_id, defect_type)
+        self._pending_ngs.append((self._current_component, ng_id))
+        self._populate_ng_table(self._current_component)
+        self._status_label.setText(f"已暂存检测项: {ng_id} ({name})  💾 点击更新数据库提交")
+
+    def _on_new_algo(self):
+        """新建算法 — 暂存内存，刷新UI"""
+        if not self._current_component:
+            QMessageBox.information(self, "提示", "请先选择元器件")
+            return
+
+        row = self._ng_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先在检测项列表中选择一行")
+            return
+        ng_id = self._ng_table.item(row, 1).text()
+        data = self._ng_table.item(row, 0).data(Qt.UserRole)
+        defect_type = data.get("defect_type", 1) if data else 1
+
+        # 选择算法类型
+        algo_names = {v: k for k, v in self.ALGO_TYPE_NAMES.items()}
+        items = [v for v in algo_names.keys() if v]
+        name, ok = QInputDialog.getItem(self, "新建算法", "选择算法类型:", items, 0, False)
+        if not ok or not name:
+            return
+        algo_type = algo_names[name]
+
+        # 检查当前NG是否已有该算法（内存+暂存）
+        common_rows = self._db.get_algorithm_params("COMMON_ALGORITHM_PARAMETER",
+                                                     self._current_component)
+        existing_types = set()
+        for r in common_rows:
+            if r.get("No_Good_Id") == ng_id:
+                existing_types.add(r.get("Algorithm_Type"))
+        for (c, ng, _, at) in self._pending_algos:
+            if c == self._current_component and ng == ng_id:
+                existing_types.add(at)
+
+        if algo_type in existing_types:
+            QMessageBox.warning(self, "重复算法",
+                f"检测项 {ng_id} 已存在 {name} 算法，请选择其他类型")
+            return
+
+        # 暂存到内存缓存（不写DB）
+        self._db.insert_algorithm_memonly(
+            self._current_component, ng_id, defect_type, algo_type)
+        self._pending_algos.append((self._current_component, ng_id, defect_type, algo_type))
+        self._populate_algor_table(self._current_component, ng_id)
+        self._status_label.setText(f"已暂存算法: {name} → {ng_id}  💾 点击更新数据库提交")
+
+    def _flush_pending(self):
+        """将暂存的NG和算法写入数据库"""
+        for (comp, ng) in self._pending_ngs:
+            for r in self._db.get_ng_records(comp):
+                if r["No_Good_Id"] == ng:
+                    defect = r.get("No_Good_Type", 1)
+                    break
+            else:
+                defect = 1
+            self._db.insert_ng(comp, ng, defect)
+        for (comp, ng, defect, algo) in self._pending_algos:
+            self._db.insert_algorithm_to_common(comp, ng, defect, algo)
+        n_ng = len(self._pending_ngs)
+        n_algo = len(self._pending_algos)
+        self._pending_ngs.clear()
+        self._pending_algos.clear()
+        return n_ng, n_algo
+
+    def _save_to_db(self):
+        """将暂存数据 + 当前编辑器参数写回数据库"""
+        if not self._current_component:
+            QMessageBox.information(self, "提示", "请先选择元器件")
+            return
+
+        n_ng, n_algo = self._flush_pending()
 
         editor = self._editor_stack.currentWidget()
-        if not editor:
-            return
-
-        # 获取当前NG_ID
         ng_id = ""
         for i in range(self._algor_table.rowCount()):
             item = self._algor_table.item(i, 0)
             if item:
                 data = item.data(Qt.UserRole)
-                if data and f"{data.get('algo_type','')}" == f"{self._current_algo_table or ''}":
-                    pass  # not quite right, use first NG_ID instead
                 if data:
                     ng_id = data.get("ng_id", "")
                     break
 
-        if not ng_id:
-            QMessageBox.warning(self, "警告", "无法确定当前NG_ID")
+        msg_parts = []
+        if n_ng > 0: msg_parts.append(f"新增 {n_ng} 个检测项")
+        if n_algo > 0: msg_parts.append(f"新增 {n_algo} 个算法")
+
+        if ng_id and editor and self._current_algo_table:
+            try:
+                if isinstance(editor, AlgorithmParamEditor):
+                    for row_data in editor.collect_values():
+                        self._db.update_algorithm_param(
+                            self._current_algo_table, self._current_component, ng_id, row_data)
+                    msg_parts.append("参数已更新")
+                elif isinstance(editor, TocAlgorithmEditor):
+                    vals = editor.collect_values()
+                    self._db.update_algorithm_param("COMMON_ALGORITHM_PARAMETER",
+                        self._current_component, ng_id, vals["common"])
+                    self._db.update_algorithm_param("TOC_ALGORITHM_PARAMETER",
+                        self._current_component, ng_id, vals["toc"])
+                    msg_parts.append("参数已更新")
+                else:
+                    vals = editor.collect_values()
+                    self._db.update_algorithm_param(self._current_algo_table,
+                        self._current_component, ng_id, vals)
+                    msg_parts.append("参数已更新")
+            except Exception as e:
+                QMessageBox.critical(self, "保存失败", str(e))
+                return
+
+        if not msg_parts:
+            QMessageBox.information(self, "提示", "没有需要保存的修改")
             return
 
-        try:
-            if isinstance(editor, AlgorithmParamEditor):
-                values = editor.collect_values()
-                for row_data in values:
-                    self._db.update_algorithm_param(
-                        self._current_algo_table, self._current_component, ng_id, row_data)
-                    self._db.update_cache(
-                        self._current_algo_table, self._current_component, ng_id, row_data)
-            elif isinstance(editor, TocAlgorithmEditor):
-                vals = editor.collect_values()
-                # Update COMMON
-                self._db.update_algorithm_param("COMMON_ALGORITHM_PARAMETER",
-                    self._current_component, ng_id, vals["common"])
-                self._db.update_cache("COMMON_ALGORITHM_PARAMETER",
-                    self._current_component, ng_id, vals["common"])
-                # Update TOC
-                self._db.update_algorithm_param("TOC_ALGORITHM_PARAMETER",
-                    self._current_component, ng_id, vals["toc"])
-                self._db.update_cache("TOC_ALGORITHM_PARAMETER",
-                    self._current_component, ng_id, vals["toc"])
-            else:
-                # Other custom editors
-                vals = editor.collect_values()
-                self._db.update_algorithm_param(self._current_algo_table,
-                    self._current_component, ng_id, vals)
-                self._db.update_cache(self._current_algo_table,
-                    self._current_component, ng_id, vals)
-
-            QMessageBox.information(self, "保存成功",
-                f"已更新参数到数据库\n表: {self._current_algo_table}")
-            self._status_label.setText(f"已保存: {self._current_algo_table}")
-        except Exception as e:
-            QMessageBox.critical(self, "保存失败", str(e))
+        QMessageBox.information(self, "保存成功", "\n".join(msg_parts))
+        self._status_label.setText(f"数据库已更新: {', '.join(msg_parts)}")
 
     def _export_csv(self):
         from datetime import datetime
