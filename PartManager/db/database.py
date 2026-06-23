@@ -165,3 +165,64 @@ class ComponentDatabase:
             "db_size_mb": self._db_size_mb,
             "cache_ready": True,
         }
+
+    # ─── 写入支持 ───────────────────────────────────────────────
+
+    def _connect_rw(self) -> sqlite3.Connection:
+        """读写连接"""
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def update_algorithm_use_flag(self, component_name: str, ng_id: str,
+                                   algo_type: int, use_flag: bool):
+        """设置某元器件+NG_ID+算法类型的Use标记"""
+        with self._connect_rw() as conn:
+            conn.execute("""
+                UPDATE COMMON_ALGORITHM_PARAMETER
+                SET Algorithm_Use_Flag = ?
+                WHERE Component_Name = ? AND No_Good_Id = ?
+                  AND Algorithm_Type = ?
+            """, (1 if use_flag else 0, component_name, ng_id, algo_type))
+            conn.commit()
+
+    def clear_use_flags_for_ng(self, component_name: str, ng_id: str):
+        """清除某元器件+NG_ID下所有算法的Use标记"""
+        with self._connect_rw() as conn:
+            conn.execute("""
+                UPDATE COMMON_ALGORITHM_PARAMETER
+                SET Algorithm_Use_Flag = 0
+                WHERE Component_Name = ? AND No_Good_Id = ?
+            """, (component_name, ng_id))
+            conn.commit()
+
+    def update_algorithm_param(self, table_name: str, component_name: str,
+                                ng_id: str, params: Dict[str, Any]):
+        """更新算法参数表中的一行"""
+        if not params:
+            return
+        # 去掉 Component_Name 和 No_Good_Id 从 SET 子句
+        set_parts = []
+        values = []
+        for k, v in params.items():
+            if k in ("Component_Name", "No_Good_Id"):
+                continue
+            set_parts.append(f"[{k}] = ?")
+            values.append(v)
+        if not set_parts:
+            return
+        values.extend([component_name, ng_id])
+        sql = f"UPDATE [{table_name}] SET {', '.join(set_parts)} WHERE Component_Name = ? AND No_Good_Id = ?"
+        with self._connect_rw() as conn:
+            conn.execute(sql, values)
+            conn.commit()
+
+    def update_cache(self, table_name: str, component_name: str,
+                     ng_id: str, params: Dict[str, Any]):
+        """同步更新内存缓存"""
+        comp_map = self._algorithm_params.get(table_name, {})
+        records = comp_map.get(component_name, [])
+        for r in records:
+            if r.get("No_Good_Id") == ng_id:
+                r.update(params)
+                break

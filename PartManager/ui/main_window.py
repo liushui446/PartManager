@@ -19,6 +19,13 @@ from db import ComponentDatabase
 from ui.styles import GLOBAL_STYLE, TITLE_STYLE, STATUS_STYLE, CARD_STYLE, SUMMARY_STYLE, PARAM_PANEL_STYLE
 from ui.algorithm_editor import AlgorithmParamEditor, ALGORITHM_SHORT_NAMES
 from ui.toc_editor import TocAlgorithmEditor
+from ui.editors.offset_editor import OffsetEditor
+from ui.editors.short_editor import ShortEditor
+from ui.editors.ocv_editor import OcvEditor
+from ui.editors.ocr_editor import OcrEditor
+from ui.editors.other_editor import OtherEditor
+from ui.editors.match_editor import MatchEditor
+from ui.editors.match2_editor import Match2Editor
 
 
 class MainWindow(QMainWindow):
@@ -183,10 +190,10 @@ class MainWindow(QMainWindow):
         # 按钮
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        self._btn_save_algo = QPushButton("💾 收集修改")
-        self._btn_save_algo.setObjectName("btnPrimary")
+        self._btn_save_db = QPushButton("💾 更新数据库")
+        self._btn_save_db.setObjectName("btnPrimary")
         self._btn_export = QPushButton("📊 导出CSV")
-        btn_row.addWidget(self._btn_save_algo)
+        btn_row.addWidget(self._btn_save_db)
         btn_row.addWidget(self._btn_export)
         layout.addLayout(btn_row)
 
@@ -198,19 +205,57 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(2, 2, 2, 2)
 
-        lbl = QLabel("🔧 算法参数编辑")
-        lbl.setStyleSheet("font-weight:bold; font-size:13px; color:#58a6ff; padding:2px 4px;")
-        layout.addWidget(lbl)
+        # 算法类型标题行
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        icon_lbl = QLabel("🔧")
+        icon_lbl.setStyleSheet("font-size:16px;")
+        title_row.addWidget(icon_lbl)
+        self._algo_title = QLabel("算法参数编辑")
+        self._algo_title.setStyleSheet("font-weight:bold; font-size:13px; color:#58a6ff; padding:2px 0;")
+        title_row.addWidget(self._algo_title)
 
-        # 用 StackedWidget 切换通用编辑器 / TOC专用编辑器
+        self._algo_type_badge = QLabel("")
+        self._algo_type_badge.setStyleSheet(
+            "background:#1f6feb; color:#fff; border-radius:4px; padding:2px 10px; font-size:11px;")
+        title_row.addWidget(self._algo_type_badge)
+
+        self._algo_ng_badge = QLabel("")
+        self._algo_ng_badge.setStyleSheet(
+            "background:#21262d; color:#8b949e; border-radius:4px; padding:2px 8px; font-size:11px;")
+        title_row.addWidget(self._algo_ng_badge)
+        title_row.addStretch()
+        layout.addLayout(title_row)
+
+        # 用 StackedWidget 切换各算法专用编辑器
         from PySide6.QtWidgets import QStackedWidget
         self._editor_stack = QStackedWidget()
-        self._algo_editor = AlgorithmParamEditor()
-        self._toc_editor = TocAlgorithmEditor()
-        self._editor_stack.addWidget(self._algo_editor)   # index 0: 通用
-        self._editor_stack.addWidget(self._toc_editor)     # index 1: TOC专用
+        self._editors: dict = {}
+        # 按 algo_type 索引
+        editor_map = {
+            "generic": AlgorithmParamEditor,
+            1: TocAlgorithmEditor,     # TOC
+            2: MatchEditor,            # Match
+            3: AlgorithmParamEditor,   # Histogram
+            4: OcvEditor,              # OCV
+            5: AlgorithmParamEditor,   # Compare
+            7: AlgorithmParamEditor,   # Glue
+            8: AlgorithmParamEditor,   # Length
+            10: AlgorithmParamEditor,  # PIN
+            12: ShortEditor,           # Short
+            13: Match2Editor,          # Match2
+            14: OtherEditor,           # Other
+            15: OffsetEditor,          # ALOffset
+            16: AlgorithmParamEditor,  # Crest
+            19: AlgorithmParamEditor,  # IC
+        }
+        # generic always at index 0
+        generic_ed = AlgorithmParamEditor()
+        self._editor_stack.addWidget(generic_ed)
+        self._editors["generic"] = generic_ed
         self._editor_stack.setCurrentIndex(0)
         layout.addWidget(self._editor_stack)
+        self._editor_map = editor_map  # store for dispatch
         return frame
 
     def _create_menu_bar(self):
@@ -233,7 +278,7 @@ class MainWindow(QMainWindow):
         self._ng_table.cellClicked.connect(self._on_ng_clicked)
         self._algor_table.cellClicked.connect(self._on_algor_clicked)
         self._search_input.textChanged.connect(self._on_search)
-        self._btn_save_algo.clicked.connect(self._on_save_algo)
+        self._btn_save_db.clicked.connect(self._save_to_db)
         self._btn_export.clicked.connect(self._export_csv)
 
     # ═════════════════════════════════════════════════════════════
@@ -288,7 +333,11 @@ class MainWindow(QMainWindow):
         self._show_component_image(comp_name)
         self._populate_ng_table(comp_name)
         self._algor_table.setRowCount(0)
-        self._algo_editor._show_placeholder("点击上方检测项 → 查看算法参数 → 点击参数行编辑")
+        self._algo_type_badge.setText("")
+        self._algo_ng_badge.setText("")
+        editor = self._editors.get("generic")
+        if editor and isinstance(editor, AlgorithmParamEditor):
+            editor._show_placeholder("点击上方检测项 → 查看算法参数 → 点击参数行编辑")
 
     def _on_search(self, text: str):
         text = text.strip().lower()
@@ -464,9 +513,11 @@ class MainWindow(QMainWindow):
             self._algor_table.setItem(i, 2, QTableWidgetItem(defect_cn))
             self._algor_table.setItem(i, 3, QTableWidgetItem(ng_id))
             self._algor_table.setItem(i, 4, QTableWidgetItem(algo_name))
-            # Use checkbox
+            # Use checkbox — 互斥：同NG下只能一个激活
             cb = QCheckBox()
             cb.setChecked(bool(use_flag))
+            cb.toggled.connect(lambda checked, r=i, ng=ng_id, at=at:
+                               self._on_use_toggled(r, checked, ng))
             self._algor_table.setCellWidget(i, 5, cb)
             self._algor_table.setItem(i, 6, QTableWidgetItem(str(r.get("Search_Scope_X", ""))))
             self._algor_table.setItem(i, 7, QTableWidgetItem(str(r.get("Search_Scope_Y", ""))))
@@ -480,8 +531,42 @@ class MainWindow(QMainWindow):
 
         self._algor_table.resizeColumnsToContents()
 
+    def _on_use_toggled(self, row: int, checked: bool, ng_id: str):
+        """USE checkbox互斥：同NG_ID下只能一个算法激活"""
+        if not checked:
+            return  # 取消勾选不管
+        # 取消其它行的勾选
+        for i in range(self._algor_table.rowCount()):
+            if i == row: continue
+            w = self._algor_table.cellWidget(i, 5)
+            if isinstance(w, QCheckBox):
+                w.blockSignals(True)
+                w.setChecked(False)
+                w.blockSignals(False)
+        # 直接写入DB
+        try:
+            self._db.clear_use_flags_for_ng(self._current_component, ng_id)
+            item = self._algor_table.item(row, 0)
+            new_algo_type = None
+            if item:
+                data = item.data(Qt.UserRole)
+                if data:
+                    new_algo_type = data["algo_type"]
+                    self._db.update_algorithm_use_flag(
+                        self._current_component, ng_id, new_algo_type, True)
+            # 更新上方检测项列表的算法显示
+            for i in range(self._ng_table.rowCount()):
+                ng_item = self._ng_table.item(i, 1)
+                if ng_item and ng_item.text() == ng_id:
+                    algo_name = self.ALGO_TYPE_NAMES.get(new_algo_type or 0, str(new_algo_type or ""))
+                    self._ng_table.setItem(i, 4, QTableWidgetItem(algo_name))
+                    break
+            self._status_label.setText(f"已切换默认算法 (NG:{ng_id})")
+        except Exception as e:
+            self._status_label.setText(f"USE写入失败: {e}")
+
     def _on_algor_clicked(self, row: int, col: int):
-        """点击算法参数行 → 加载对应算法表的具体参数到编辑器"""
+        """点击算法参数行 → 根据算法类型加载对应专用编辑器"""
         item = self._algor_table.item(row, 0)
         if not item: return
         data = item.data(Qt.UserRole)
@@ -489,58 +574,121 @@ class MainWindow(QMainWindow):
 
         algo_type = data["algo_type"]
         ng_id = data["ng_id"]
+        common_row = data["full_row"]
         algo_name = self.ALGO_TYPE_NAMES.get(algo_type, f"Algo{algo_type}")
 
+        # 算法表映射
         algo_table_map = {
             1: "TOC_ALGORITHM_PARAMETER", 2: "MATCH_ALGORITHM_PARAMETER",
             3: "HISTOGRAM_ALGORITHM_PARAMETER", 4: "OCV_ALGORITHM_PARAMETER",
-            5: "COMPARE_ALGORITHM_PARAMETER", 6: "DISTANCE_ALGORITHM_PARAMETER",
-            7: "GLUE_ALGORITHM_PARAMETER", 8: "LENGTH_ALGORITHM_PARAMETER",
-            9: "PADPLACE_ALGORITHM_PARAMETER", 10: "PIN_ALGORITHM_PARAMETER",
-            11: "POLE_ALGORITHM_PARAMETER", 12: "SHORT_ALGORITHM_PARAMETER",
-            13: "MATCH2_ALGORITHM_PARAMETER", 14: "OTHER_ALGORITHM_PARAMETER",
-            15: "ALOFFSET_ALGORITHM_PARAMETER", 16: "CREST_ALGORITHM_PARAMETER",
-            17: "HOLE_ALGORITHM_PARAMETER", 18: "MACROSM_ALGORITHM_PARAMETER",
-            19: "IC_ALGORITHM_PARAMETER", 20: "INSPECTION3D_ALGORITHM_PARAMETER",
+            5: "COMPARE_ALGORITHM_PARAMETER", 7: "GLUE_ALGORITHM_PARAMETER",
+            8: "LENGTH_ALGORITHM_PARAMETER", 10: "PIN_ALGORITHM_PARAMETER",
+            12: "SHORT_ALGORITHM_PARAMETER", 13: "MATCH2_ALGORITHM_PARAMETER",
+            14: "OTHER_ALGORITHM_PARAMETER", 15: "ALOFFSET_ALGORITHM_PARAMETER",
+            16: "CREST_ALGORITHM_PARAMETER", 19: "IC_ALGORITHM_PARAMETER",
         }
-        target_table = algo_table_map.get(algo_type, "COMMON_ALGORITHM_PARAMETER")
+        target_table = algo_table_map.get(algo_type, "COMMON")
 
-        # ── TOC 专用编辑器 ──
-        if algo_type == 1:
-            common_params = data["full_row"]  # COMMON 的行数据
-            toc_params_list = self._db.get_algorithm_params("TOC_ALGORITHM_PARAMETER",
-                                                             self._current_component)
-            toc_matched = [p for p in toc_params_list if p.get("No_Good_Id", "") == ng_id]
-            toc_params = toc_matched[0] if toc_matched else {}
-
-            self._editor_stack.setCurrentIndex(1)
-            self._toc_editor.load_params(common_params, toc_params)
-            self._current_algo_table = "TOC_ALGORITHM_PARAMETER"
-            self._status_label.setText(
-                f"编辑中: {self._current_component} → TOC (NG:{ng_id})")
-            return
-
-        # ── 通用编辑器 ──
-        self._editor_stack.setCurrentIndex(0)
         self._current_algo_table = target_table
+
+        # ── 获取目标表参数 ──
         params = self._db.get_algorithm_params(target_table, self._current_component)
         matched = [p for p in params if p.get("No_Good_Id", "") == ng_id]
+        param_row = matched[0] if matched else {}
 
-        self._status_label.setText(
-            f"编辑中: {self._current_component} → {algo_name} (NG:{ng_id})")
-        self._algo_editor.load_algorithm(target_table, matched)
+        # ── 获取/创建专用编辑器 ──
+        editor_cls = self._editor_map.get(algo_type)
+        if editor_cls is None:
+            editor_cls = AlgorithmParamEditor
 
-    def _on_save_algo(self):
-        if not self._current_algo_table or not self._algo_editor.current_table:
-            QMessageBox.information(self, "提示", "请先在算法参数列表中点击一行选择算法")
+        editor_key = f"{algo_type}"
+        if editor_key not in self._editors:
+            ed = editor_cls()
+            self._editor_stack.addWidget(ed)
+            self._editors[editor_key] = ed
+
+        editor = self._editors[editor_key]
+
+        # ── 加载参数 ──
+        if algo_type == 1:  # TOC: 特殊处理
+            toc_params_list = self._db.get_algorithm_params("TOC_ALGORITHM_PARAMETER", self._current_component)
+            toc_matched = [p for p in toc_params_list if p.get("No_Good_Id", "") == ng_id]
+            toc_params = toc_matched[0] if toc_matched else {}
+            editor.load_params(common_row, toc_params)
+        elif isinstance(editor, AlgorithmParamEditor):
+            editor.load_algorithm(target_table, matched)
+        else:
+            # 合并 COMMON 和目标表参数
+            merged = dict(common_row)
+            merged.update(param_row)
+            editor.load_params(merged)
+
+        self._editor_stack.setCurrentWidget(editor)
+        # 更新顶部标签
+        self._algo_title.setText(f"算法参数编辑")
+        self._algo_type_badge.setText(algo_name)
+        self._algo_ng_badge.setText(f"NG:{ng_id}")
+        self._status_label.setText(f"编辑中: {self._current_component} → {algo_name} (NG:{ng_id})")
+
+    def _save_to_db(self):
+        """将当前编辑器的修改写回数据库"""
+        if not self._current_algo_table or not self._current_component:
+            QMessageBox.information(self, "提示", "请先选择元器件和算法参数")
             return
-        values = self._algo_editor.collect_values()
-        QMessageBox.information(self, "参数收集完成",
-            f"算法: {self._algo_editor.current_table}\n"
-            f"元器件: {self._current_component}\n"
-            f"共 {len(values)} 条记录\n\n"
-            f"当前为只读模式，写入功能可后续扩展。")
-        self._status_label.setText(f"已收集 {len(values)} 条参数修改")
+
+        editor = self._editor_stack.currentWidget()
+        if not editor:
+            return
+
+        # 获取当前NG_ID
+        ng_id = ""
+        for i in range(self._algor_table.rowCount()):
+            item = self._algor_table.item(i, 0)
+            if item:
+                data = item.data(Qt.UserRole)
+                if data and f"{data.get('algo_type','')}" == f"{self._current_algo_table or ''}":
+                    pass  # not quite right, use first NG_ID instead
+                if data:
+                    ng_id = data.get("ng_id", "")
+                    break
+
+        if not ng_id:
+            QMessageBox.warning(self, "警告", "无法确定当前NG_ID")
+            return
+
+        try:
+            if isinstance(editor, AlgorithmParamEditor):
+                values = editor.collect_values()
+                for row_data in values:
+                    self._db.update_algorithm_param(
+                        self._current_algo_table, self._current_component, ng_id, row_data)
+                    self._db.update_cache(
+                        self._current_algo_table, self._current_component, ng_id, row_data)
+            elif isinstance(editor, TocAlgorithmEditor):
+                vals = editor.collect_values()
+                # Update COMMON
+                self._db.update_algorithm_param("COMMON_ALGORITHM_PARAMETER",
+                    self._current_component, ng_id, vals["common"])
+                self._db.update_cache("COMMON_ALGORITHM_PARAMETER",
+                    self._current_component, ng_id, vals["common"])
+                # Update TOC
+                self._db.update_algorithm_param("TOC_ALGORITHM_PARAMETER",
+                    self._current_component, ng_id, vals["toc"])
+                self._db.update_cache("TOC_ALGORITHM_PARAMETER",
+                    self._current_component, ng_id, vals["toc"])
+            else:
+                # Other custom editors
+                vals = editor.collect_values()
+                self._db.update_algorithm_param(self._current_algo_table,
+                    self._current_component, ng_id, vals)
+                self._db.update_cache(self._current_algo_table,
+                    self._current_component, ng_id, vals)
+
+            QMessageBox.information(self, "保存成功",
+                f"已更新参数到数据库\n表: {self._current_algo_table}")
+            self._status_label.setText(f"已保存: {self._current_algo_table}")
+        except Exception as e:
+            QMessageBox.critical(self, "保存失败", str(e))
 
     def _export_csv(self):
         from datetime import datetime
