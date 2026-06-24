@@ -4,6 +4,7 @@ from PySide6.QtWidgets import (
     QLabel, QSpinBox, QComboBox, QFrame,
 )
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 
 from ui.range_slider import RangeSlider
 
@@ -11,7 +12,6 @@ from ui.range_slider import RangeSlider
 def _make_range_row(label: str, lo: int, hi: int, color_key: str,
                     low_val: int, high_val: int) -> dict:
     """创建一行: [标签] [低值SpinBox] [彩色RangeSlider] [高值SpinBox]"""
-    from PySide6.QtGui import QColor
 
     color_map = {
         "R": QColor(200, 60, 60), "G": QColor(60, 180, 60),
@@ -20,44 +20,77 @@ def _make_range_row(label: str, lo: int, hi: int, color_key: str,
     }
     track_color = color_map.get(color_key, QColor(100, 100, 100))
 
-    spin_style = ("QSpinBox{background:#0d1117;color:#e6edf3;"
-                  "border:1px solid #30363d;border-radius:3px;"
-                  "padding:1px 2px 1px 4px;font-size:11px;}"
-                  "QSpinBox::up-button{width:14px;background:#21262d;"
-                  "border-left:1px solid #30363d;}"
-                  "QSpinBox::down-button{width:14px;background:#21262d;"
-                  "border-left:1px solid #30363d;}")
+    # 优化SpinBox样式：分层底色区分上下箭头、加大白色箭头、加高内边距防文字裁切
+    spin_style = """
+QSpinBox{
+    background:#0d1117;
+    color:#e6edf3;
+    border:1px solid #30363d;
+    border-radius:3px;
+    padding:2px 4px 2px 4px;
+    font-size:11px;
+}
+QSpinBox::up-button, QSpinBox::down-button{
+    width:18px;
+    border-left:1px solid #30363d;
+    border:none;
+}
+QSpinBox::up-button{
+    background:#2d333b;
+    border-top-right-radius:3px;
+}
+QSpinBox::down-button{
+    background:#21262d;
+    border-bottom-right-radius:3px;
+}
+QSpinBox::up-arrow{
+    width:10px;
+    height:10px;
+    color:#ffffff;
+}
+QSpinBox::down-arrow{
+    width:10px;
+    height:10px;
+    color:#ffffff;
+}
+QSpinBox::up-button:hover{background:#383e48;}
+QSpinBox::down-button:hover{background:#2b3038;}
+    """
 
     w = QWidget()
     row = QHBoxLayout(w)
     row.setContentsMargins(0, 0, 0, 0)
-    row.setSpacing(4)
+    row.setSpacing(8)  # 放大间距，防止控件挤压遮挡
 
     lbl = QLabel(label)
     lbl.setFixedWidth(72)
     lbl.setStyleSheet("color:#c9d1d9; font-size:11px; font-weight:bold;")
     row.addWidget(lbl)
 
+    # 左侧下限输入框：加宽固定宽度，保证完整显示不被挤压
     low = QSpinBox()
     low.setRange(lo, hi)
     low.setValue(low_val)
-    low.setFixedWidth(52)
-    low.setFixedHeight(28)
+    low.setFixedWidth(60)
+    low.setFixedHeight(34)
     low.setStyleSheet(spin_style)
+    row.addWidget(low)  # 无拉伸，固定尺寸，优先渲染
 
+    # 中间滑块占剩余空间
     rs = RangeSlider()
     rs.setMinimum(lo)
     rs.setMaximum(hi)
     rs.setLowerValue(low_val)
     rs.setUpperValue(high_val)
     rs.SetColor(track_color)
-    row.addWidget(rs, 1)
+    row.addWidget(rs, stretch=1)
 
+    # 右侧上限输入框
     high = QSpinBox()
     high.setRange(lo, hi)
     high.setValue(high_val)
-    high.setFixedWidth(52)
-    high.setFixedHeight(28)
+    high.setFixedWidth(60)
+    high.setFixedHeight(34)
     high.setStyleSheet(spin_style)
     row.addWidget(high)
 
@@ -82,10 +115,47 @@ class PinEditor(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
 
+        # 统一SpinBox样式（给矩形坐标输入框复用）
+        rect_spin_style = """
+QSpinBox{
+    background:#0d1117;
+    color:#e6edf3;
+    border:1px solid #30363d;
+    border-radius:3px;
+    padding:2px 4px 2px 4px;
+    font-size:11px;
+}
+QSpinBox::up-button, QSpinBox::down-button{
+    width:18px;
+    border-left:1px solid #30363d;
+    border:none;
+}
+QSpinBox::up-button{
+    background:#2d333b;
+    border-top-right-radius:3px;
+}
+QSpinBox::down-button{
+    background:#21262d;
+    border-bottom-right-radius:3px;
+}
+QSpinBox::up-arrow{
+    width:10px;
+    height:10px;
+    color:#ffffff;
+}
+QSpinBox::down-arrow{
+    width:10px;
+    height:10px;
+    color:#ffffff;
+}
+QSpinBox::up-button:hover{background:#383e48;}
+QSpinBox::down-button:hover{background:#2b3038;}
+        """
+
         # ═══ 少锡检测 ═══
         lt_group = QGroupBox("少锡检测 — 通道范围")
         lt_layout = QVBoxLayout(lt_group)
-        lt_layout.setSpacing(4)
+        lt_layout.setSpacing(6)  # 组内行间距放大
 
         self._rows_lt = {}
         for key, label, color in [
@@ -108,7 +178,7 @@ class PinEditor(QWidget):
         # ═══ 空焊检测 ═══
         ew_group = QGroupBox("空焊检测 — 通道范围")
         ew_layout = QVBoxLayout(ew_group)
-        ew_layout.setSpacing(4)
+        ew_layout.setSpacing(6)
 
         self._rows_ew = {}
         for key, label, color in [
@@ -130,7 +200,7 @@ class PinEditor(QWidget):
         # ═══ 检测矩形 ═══
         rect_group = QGroupBox("检测矩形区域")
         rg = QGridLayout(rect_group)
-        rg.setSpacing(4)
+        rg.setSpacing(6)
         self._rect_spins = {}
         rect_fields = [
             ("Detected_Rect_Left_Top_X", "检测 左上X"),
@@ -143,9 +213,14 @@ class PinEditor(QWidget):
             ("Position_Rect_Right_Down_Y", "定位 右下Y"),
         ]
         for r, (key, label) in enumerate(rect_fields):
-            rr = r // 2; cc = (r % 2) * 2
+            rr = r // 2
+            cc = (r % 2) * 2
             rg.addWidget(QLabel(label), rr, cc)
-            sp = QSpinBox(); sp.setRange(0, 99999); sp.setValue(0)
+            sp = QSpinBox()
+            sp.setRange(0, 99999)
+            sp.setValue(0)
+            sp.setFixedHeight(34)
+            sp.setStyleSheet(rect_spin_style)
             rg.addWidget(sp, rr, cc + 1)
             self._rect_spins[key] = sp
         layout.addWidget(rect_group)
