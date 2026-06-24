@@ -18,15 +18,12 @@ from ui.range_slider import RangeSlider
 # ─── 色度三角形控件 ─────────────────────────────────────────────
 
 class TriangleWidget(QWidget):
-    """HSL色度三角形可视化 — 简化版"""
-
-    redLowChanged = Signal(int); redHighChanged = Signal(int)
-    greenLowChanged = Signal(int); greenHighChanged = Signal(int)
-    blueLowChanged = Signal(int); blueHighChanged = Signal(int)
+    """HSL色度三角形可视化 — 框选范围随RGB参数变化"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumSize(200, 180)
+        self.setMinimumSize(140, 120)
+        self.setMaximumHeight(180)
         self._r_lo, self._r_hi = 0, 180
         self._g_lo, self._g_hi = 0, 180
         self._b_lo, self._b_hi = 0, 180
@@ -37,6 +34,25 @@ class TriangleWidget(QWidget):
     def SetGreenHighValue(self, v): self._g_hi = v; self.update()
     def SetBlueLowValue(self, v): self._b_lo = v; self.update()
     def SetBlueHighValue(self, v): self._b_hi = v; self.update()
+
+    def _hue_to_xy(self, h: float, w: int, hgt: int, margin: int,
+                    r_pt: QPoint, g_pt: QPoint, b_pt: QPoint) -> QPoint:
+        """将色相值(0-180)映射到三角形坐标"""
+        # 三角形顶点: R=0/180(顶部), G=60(左下), B=120(右下)
+        # 简化: 线性插值
+        if h <= 60:
+            t = h / 60.0
+            x = r_pt.x() + (g_pt.x() - r_pt.x()) * t
+            y = r_pt.y() + (g_pt.y() - r_pt.y()) * t
+        elif h <= 120:
+            t = (h - 60) / 60.0
+            x = g_pt.x() + (b_pt.x() - g_pt.x()) * t
+            y = g_pt.y() + (b_pt.y() - g_pt.y()) * t
+        else:
+            t = (h - 120) / 60.0
+            x = b_pt.x() + (r_pt.x() - b_pt.x()) * t
+            y = b_pt.y() + (r_pt.y() - b_pt.y()) * t
+        return QPoint(int(x), int(y))
 
     def paintEvent(self, event):
         p = QPainter(self)
@@ -83,13 +99,24 @@ class TriangleWidget(QWidget):
         p.drawText(QPoint(g_pt.x() - 20, g_pt.y() + 16), "G")
         p.drawText(QPoint(b_pt.x() + 6, b_pt.y() + 16), "B")
 
-        # 选中的颜色区间框 (中心六边形近似)
-        cx = (r_pt.x() + g_pt.x() + b_pt.x()) // 3
-        cy = (r_pt.y() + g_pt.y() + b_pt.y()) // 3
-        size = 15
+        # 选中的颜色区间框（6个点: R低,R高,G低,G高,B低,B高）
+        pts = [
+            self._hue_to_xy(self._r_lo, w, h, margin, r_pt, g_pt, b_pt),
+            self._hue_to_xy(self._r_hi, w, h, margin, r_pt, g_pt, b_pt),
+            self._hue_to_xy(self._g_lo, w, h, margin, r_pt, g_pt, b_pt),
+            self._hue_to_xy(self._g_hi, w, h, margin, r_pt, g_pt, b_pt),
+            self._hue_to_xy(self._b_lo, w, h, margin, r_pt, g_pt, b_pt),
+            self._hue_to_xy(self._b_hi, w, h, margin, r_pt, g_pt, b_pt),
+        ]
+        # 计算凸包作为选中区域
+        from PySide6.QtGui import QPolygonF
+        cx = sum(p.x() for p in pts) / 6
+        cy = sum(p.y() for p in pts) / 6
+        pts_sorted = sorted(pts, key=lambda p: __import__('math').atan2(p.y()-cy, p.x()-cx))
+        poly = QPolygonF([p for p in pts_sorted])
         p.setPen(QPen(QColor(255, 255, 255), 2))
-        p.setBrush(QColor(0, 0, 0, 120))
-        p.drawRect(cx - size, cy - size, size * 2, size * 2)
+        p.setBrush(QColor(0, 0, 0, 100))
+        p.drawPolygon(poly)
 
         p.end()
 
@@ -279,6 +306,35 @@ class TocAlgorithmEditor(QWidget):
         self._row_blue["high"].setValue(int(common_params.get("Color_Blue_High", 180)))
         self._row_gray["low"].setValue(int(common_params.get("Color_Gray_Low", 0)))
         self._row_gray["high"].setValue(int(common_params.get("Color_Gray_High", 255)))
+
+        # 绑定 RangeSlider → 色度三角形
+        for color_name, row_key in [("Red", "_row_red"), ("Green", "_row_green"),
+                                     ("Blue", "_row_blue")]:
+            rs = getattr(self, row_key)["slider"]
+            triangle = self._triangle
+            # 断开旧信号（避免重复连接）
+            try:
+                rs.lowerValueChanged.disconnect()
+                rs.upperValueChanged.disconnect()
+            except Exception:
+                pass
+            if color_name == "Red":
+                rs.lowerValueChanged.connect(triangle.SetRedLowValue)
+                rs.upperValueChanged.connect(triangle.SetRedHighValue)
+            elif color_name == "Green":
+                rs.lowerValueChanged.connect(triangle.SetGreenLowValue)
+                rs.upperValueChanged.connect(triangle.SetGreenHighValue)
+            else:
+                rs.lowerValueChanged.connect(triangle.SetBlueLowValue)
+                rs.upperValueChanged.connect(triangle.SetBlueHighValue)
+
+        # 初始设置三角形值
+        self._triangle.SetRedLowValue(int(common_params.get("Color_Red_Low", 0)))
+        self._triangle.SetRedHighValue(int(common_params.get("Color_Red_High", 180)))
+        self._triangle.SetGreenLowValue(int(common_params.get("Color_Green_Low", 0)))
+        self._triangle.SetGreenHighValue(int(common_params.get("Color_Green_High", 180)))
+        self._triangle.SetBlueLowValue(int(common_params.get("Color_Blue_Low", 0)))
+        self._triangle.SetBlueHighValue(int(common_params.get("Color_Blue_High", 180)))
 
         # TOC 参数
         auto = toc_params.get("Auto_Extract_Color", 0)
