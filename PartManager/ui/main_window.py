@@ -21,6 +21,7 @@ from ui.styles import GLOBAL_STYLE, TITLE_STYLE, STATUS_STYLE, CARD_STYLE, SUMMA
 from ui.algorithm_editor import AlgorithmParamEditor, ALGORITHM_SHORT_NAMES
 from ui.toc_editor import TocAlgorithmEditor
 from ui.interactive_roi import InteractiveRoiView
+from ui.new_component_dialog import NewComponentDialog
 from ui.editors.offset_editor import OffsetEditor
 from ui.editors.short_editor import ShortEditor
 from ui.editors.ocv_editor import OcvEditor
@@ -196,9 +197,13 @@ class MainWindow(QMainWindow):
         btn_row = QHBoxLayout()
         self._btn_new_ng = QPushButton("➕ 新建NG")
         self._btn_new_algo = QPushButton("➕ 新建算法")
+        self._btn_new_comp = QPushButton("🆕 新建元件")
+        self._btn_del_comp = QPushButton("🗑 删除元件")
         self._btn_save_db = QPushButton("💾 更新数据库")
         self._btn_save_db.setObjectName("btnPrimary")
         self._btn_export = QPushButton("📊 导出CSV")
+        btn_row.addWidget(self._btn_new_comp)
+        btn_row.addWidget(self._btn_del_comp)
         btn_row.addWidget(self._btn_new_ng)
         btn_row.addWidget(self._btn_new_algo)
         btn_row.addStretch()
@@ -287,6 +292,8 @@ class MainWindow(QMainWindow):
         self._ng_table.cellClicked.connect(self._on_ng_clicked)
         self._algor_table.cellClicked.connect(self._on_algor_clicked)
         self._search_input.textChanged.connect(self._on_search)
+        self._btn_new_comp.clicked.connect(self._on_new_component)
+        self._btn_del_comp.clicked.connect(self._on_delete_component)
         self._btn_new_ng.clicked.connect(self._on_new_ng)
         self._btn_new_algo.clicked.connect(self._on_new_algo)
         self._btn_save_db.clicked.connect(self._save_to_db)
@@ -398,7 +405,7 @@ class MainWindow(QMainWindow):
             try:
                 w = int(comp.get("Component_Image_Width", 0))
                 h = int(comp.get("Component_Image_Height", 0))
-                if w > 0 and h > 0 and len(blob) == w * h * 3:
+                if w > 0 and h > 0 and len(blob) >= w * h * 3:
                     img = QImage(bytes(blob), w, h, w * 3, QImage.Format_RGB888)
                 else:
                     img = QImage.fromData(bytes(blob))
@@ -532,7 +539,7 @@ class MainWindow(QMainWindow):
             try:
                 w = int(comp.get("Component_Image_Width", 0))
                 h = int(comp.get("Component_Image_Height", 0))
-                if w > 0 and h > 0 and len(blob) == w * h * 3:
+                if w > 0 and h > 0 and len(blob) >= w * h * 3:
                     img = QImage(bytes(blob), w, h, w * 3, QImage.Format_RGB888)
                 else:
                     img = QImage.fromData(bytes(blob))
@@ -758,6 +765,54 @@ class MainWindow(QMainWindow):
         self._algo_type_badge.setText(algo_name)
         self._algo_ng_badge.setText(f"NG:{ng_id}")
         self._status_label.setText(f"编辑中: {self._current_component} → {algo_name} (NG:{ng_id})")
+
+    def _on_new_component(self):
+        """新建元器件"""
+        dlg = NewComponentDialog(self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+        name = dlg.get_component_name()
+        pkg = dlg.get_package_type()
+        img_data, img_w, img_h = dlg.get_image_data()
+
+        try:
+            # 写入DB
+            self._db.insert_component(name, pkg, img_data, img_w, img_h)
+            # 创建偏移检测项 + Match算法（写DB，非暂存）
+            self._db.insert_ng(name, "BD001", 1)  # 1=偏移
+            self._db.insert_algorithm_to_common(name, "BD001", 1, 2)  # 2=Match
+            # 刷新树并自动选中新元件
+            self._load_component_tree()
+            self._current_component = name
+            self._show_component_info(name)
+            self._show_component_image(name)
+            self._populate_ng_table(name)
+            self._status_label.setText(f"已新建元件: {name} (偏移+Match)")
+        except Exception as e:
+            QMessageBox.critical(self, "新建失败", str(e))
+
+    def _on_delete_component(self):
+        """删除当前选中的元器件"""
+        if not self._current_component:
+            QMessageBox.information(self, "提示", "请先在元器件树中选择一个元器件")
+            return
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除元器件 \"{self._current_component}\" 及其所有检测项和算法吗？\n此操作不可恢复！",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            name = self._current_component
+            self._db.delete_component(name)
+            self._current_component = None
+            self._load_component_tree()
+            self._ng_table.setRowCount(0)
+            self._algor_table.setRowCount(0)
+            self._algo_type_badge.setText("")
+            self._status_label.setText(f"已删除元件: {name}")
+        except Exception as e:
+            QMessageBox.critical(self, "删除失败", str(e))
 
     def _on_new_ng(self):
         """新建检测项(NG) — 暂存内存，刷新UI"""

@@ -332,6 +332,54 @@ class ComponentDatabase:
         """插入新的算法 — 仅缓存，不写DB"""
         self._sync_algo_cache(component_name, ng_id, defect_type, algo_type)
 
+    def insert_component(self, comp_name: str, package_type: str,
+                         img_data: bytes, img_w: int, img_h: int):
+        """插入新元器件"""
+        with self._connect_rw() as conn:
+            conn.execute("""
+                INSERT INTO COMPONENT
+                (Component_Name, PackageType, Component_Width, Component_Height,
+                 Crop_Area_X, Crop_Area_Y, Crop_Area_Angle,
+                 Component_Image, Component_Image_Width, Component_Image_Height,
+                 Template_Flag)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (comp_name, package_type, 0, 0, 1.2, 1.2, 0.0,
+                  img_data, img_w, img_h, 0))
+            conn.commit()
+        # 更新缓存
+        self._component_list.append({
+            "Component_Name": comp_name, "PackageType": package_type,
+            "Component_Width": 0, "Component_Height": 0,
+            "Crop_Area_X": 1.2, "Crop_Area_Y": 1.2, "Crop_Area_Angle": 0,
+            "Component_Image": img_data, "Component_Image_Width": img_w,
+            "Component_Image_Height": img_h, "Template_Flag": 0,
+        })
+        self._components[comp_name] = self._component_list[-1]
+        if package_type not in self._package_types:
+            self._package_types.append(package_type)
+            self._package_types.sort()
+
+    def delete_component(self, comp_name: str):
+        """删除元器件及其关联数据"""
+        with self._connect_rw() as conn:
+            conn.execute("DELETE FROM COMPONENT WHERE Component_Name=?", (comp_name,))
+            conn.execute("DELETE FROM COMPONENT_NG WHERE Component_Name=?", (comp_name,))
+            conn.execute("DELETE FROM COMMON_ALGORITHM_PARAMETER WHERE Component_Name=?", (comp_name,))
+            conn.commit()
+        # 更新缓存
+        self._component_list = [c for c in self._component_list
+                                if c["Component_Name"] != comp_name]
+        self._components.pop(comp_name, None)
+        self._ng_records = [r for r in self._ng_records
+                            if r["Component_Name"] != comp_name]
+        if comp_name in self._ng_by_component:
+            del self._ng_by_component[comp_name]
+        keys_to_del = [k for k in self._ng_roi if k[0] == comp_name]
+        for k in keys_to_del:
+            del self._ng_roi[k]
+        for comp_map in self._algorithm_params.values():
+            comp_map.pop(comp_name, None)
+
     def delete_ng(self, component_name: str, ng_id: str):
         """删除NG记录及其关联的算法参数"""
         with self._connect_rw() as conn:
