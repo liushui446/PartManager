@@ -243,18 +243,53 @@ class TocAlgorithmEditor(QWidget):
         w = QWidget()
         row = QHBoxLayout(w)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(6)
+        row.setSpacing(8)
 
         lbl = QLabel(label)
         lbl.setFixedWidth(55)
         lbl.setStyleSheet("color:#c9d1d9; font-size:11px;")
         row.addWidget(lbl)
 
+        # 低值SpinBox
         low = QSpinBox()
         low.setRange(lo, hi)
-        low.setFixedWidth(50)
-        low.setFixedHeight(28)
-        low.setStyleSheet("QSpinBox { font-size:11px; }")
+        low.setFixedWidth(58)
+        low.setFixedHeight(34)
+        low.setStyleSheet("""
+            QSpinBox { 
+                font-size:11px; 
+                color:#c9d1d9;
+                padding: 2px 3px;
+                border: 1px solid #444a53;
+                background-color:#161b22;
+            }
+            /* 整体按钮容器宽度加宽 */
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 18px;
+                border: none;
+            }
+            /* 上箭头按钮：浅深色底 */
+            QSpinBox::up-button {
+                background:#363c44;
+                border-top-right-radius:4px;
+            }
+            /* 下箭头按钮：更深底色，区分上层 */
+            QSpinBox::down-button {
+                background:#2a2f36;
+                border-bottom-right-radius:4px;
+            }
+            /* 加大白色箭头，清晰可见 */
+            QSpinBox::up-arrow {
+                width:10px;
+                height:10px;
+                color:#ffffff;
+            }
+            QSpinBox::down-arrow {
+                width:10px;
+                height:10px;
+                color:#ffffff;
+            }
+        """)
         row.addWidget(low)
 
         rs = RangeSlider()
@@ -263,15 +298,48 @@ class TocAlgorithmEditor(QWidget):
         rs.SetColor(color)
         row.addWidget(rs, 1)
 
+        # 高值SpinBox 和左侧样式完全统一
         high = QSpinBox()
         high.setRange(lo, hi)
         high.setValue(hi)
-        high.setFixedWidth(50)
-        high.setFixedHeight(28)
-        high.setStyleSheet("QSpinBox { font-size:11px; }")
+        high.setFixedWidth(58)
+        high.setFixedHeight(34)
+        high.setStyleSheet("""
+            QSpinBox { 
+                font-size:11px; 
+                color:#c9d1d9;
+                padding: 2px 3px;
+                border: 1px solid #444a53;
+                background-color:#161b22;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                width: 18px;
+                border: none;
+            }
+            QSpinBox::up-button {
+                background:#363c44;
+                border-top-right-radius:4px;
+            }
+            QSpinBox::down-button {
+                background:#2a2f36;
+                border-bottom-right-radius:4px;
+            }
+            QSpinBox::up-arrow {
+                width:10px;
+                height:10px;
+                color:#000000;
+            }
+            QSpinBox::down-arrow {
+                width:10px;
+                height:10px;
+                color:#000000;
+            }
+            QSpinBox::up-button:hover {background:#404750;}
+            QSpinBox::down-button:hover {background:#31373f;}
+        """)
         row.addWidget(high)
 
-        # 双向绑定
+        # 双向绑定逻辑不变
         rs.lowerValueChanged.connect(
             lambda v, s=low: (s.blockSignals(True), s.setValue(v), s.blockSignals(False)))
         rs.upperValueChanged.connect(
