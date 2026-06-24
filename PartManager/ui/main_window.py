@@ -20,6 +20,7 @@ from db import ComponentDatabase
 from ui.styles import GLOBAL_STYLE, TITLE_STYLE, STATUS_STYLE, CARD_STYLE, SUMMARY_STYLE, PARAM_PANEL_STYLE
 from ui.algorithm_editor import AlgorithmParamEditor, ALGORITHM_SHORT_NAMES
 from ui.toc_editor import TocAlgorithmEditor
+from ui.interactive_roi import InteractiveRoiView
 from ui.editors.offset_editor import OffsetEditor
 from ui.editors.short_editor import ShortEditor
 from ui.editors.ocv_editor import OcvEditor
@@ -152,14 +153,12 @@ class MainWindow(QMainWindow):
         self._info_table.setMaximumWidth(340)
         info_row.addWidget(self._info_table)
 
-        self._image_label = QLabel("选择元器件后显示")
-        self._image_label.setAlignment(Qt.AlignCenter)
-        self._image_label.setMinimumSize(160, 120)
-        self._image_label.setMaximumHeight(180)
-        self._image_label.setStyleSheet(
-            "QLabel { background:#0d1117; border:1px solid #30363d; border-radius:4px; color:#484f58; }"
-        )
-        info_row.addWidget(self._image_label)
+        self._image_view = InteractiveRoiView()
+        self._image_view.setMinimumSize(160, 120)
+        self._image_view.setMaximumHeight(180)
+        info_row.addWidget(self._image_view)
+        # 存储当前ROI参数供回调使用
+        self._roi_callback_params = {}
         layout.addLayout(info_row)
 
         # ── 上方：检测项列表（参考 RefCompoNGTable） ──
@@ -292,6 +291,8 @@ class MainWindow(QMainWindow):
         self._btn_new_algo.clicked.connect(self._on_new_algo)
         self._btn_save_db.clicked.connect(self._save_to_db)
         self._btn_export.clicked.connect(self._export_csv)
+        # ROI 拖拽回调
+        self._image_view.roi_changed.connect(self._on_roi_changed)
 
     # ═════════════════════════════════════════════════════════════
     #  数据加载
@@ -388,36 +389,27 @@ class MainWindow(QMainWindow):
         self._info_table.horizontalHeader().setStretchLastSection(True)
 
     def _show_component_image(self, comp_name: str):
+        """显示元器件模板图像（无ROI）"""
         comp = self._db.get_component_by_name(comp_name)
-        if not comp:
-            return
-
+        if not comp: return
         for blob_key in ("Component_Image", "HG_Image"):
             blob = comp.get(blob_key)
-            if not blob:
-                continue
+            if not blob: continue
             try:
                 w = int(comp.get("Component_Image_Width", 0))
                 h = int(comp.get("Component_Image_Height", 0))
-                # 数据库存储的是原始 RGB 像素数据（参考原C++: aoi::Color::RGB）
                 if w > 0 and h > 0 and len(blob) == w * h * 3:
                     img = QImage(bytes(blob), w, h, w * 3, QImage.Format_RGB888)
                 else:
-                    # 尝试作为编码图像解码
                     img = QImage.fromData(bytes(blob))
-                if img.isNull():
-                    continue
-                pixmap = QPixmap.fromImage(img)
-                mw = max(self._image_label.width() - 16, 200)
-                mh = max(self._image_label.height() - 16, 100)
-                scaled = pixmap.scaled(mw, mh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                self._image_label.setPixmap(scaled)
-                self._image_label.setAlignment(Qt.AlignCenter)
+                if img.isNull(): continue
+                mw = max(self._image_view.width() - 4, 200)
+                mh = max(self._image_view.height() - 4, 100)
+                scaled = img.scaled(mw, mh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                self._image_view.set_image(QPixmap.fromImage(scaled), img.width(), img.height())
                 return
             except Exception:
                 continue
-
-        self._image_label.setText("无图像数据")
 
     # ═════════════════════════════════════════════════════════════
     #  检测项列表 & 算法参数列表（参考 RefCompoNGTable / RefCompAlgorTable）
@@ -518,12 +510,10 @@ class MainWindow(QMainWindow):
         self._show_component_image_with_roi(self._current_component, ng_id)
 
     def _show_component_image_with_roi(self, comp_name: str, ng_id: str):
-        """显示模板图像并绘制红色ROI框
-           BD001(偏移)的ROI中心=图像中心，其他NG相对于BD001偏移"""
+        """显示模板图像并设置可交互ROI框"""
         comp = self._db.get_component_by_name(comp_name)
         if not comp: return
 
-        # 获取分辨率
         ngs = self._db.get_ng_records(comp_name)
         resolution = 15.0
         for ng in ngs:
@@ -532,16 +522,10 @@ class MainWindow(QMainWindow):
                 break
         factor = 1000.0 / resolution if resolution > 0 else 1.0
 
-        # BD001(偏移)的ROI作为参考中心
         bd001_roi = self._db.get_ng_roi(comp_name, "BD001")
         has_bd001 = bd001_roi["w"] > 0
-
-        # 当前NG的ROI
         current_roi = self._db.get_ng_roi(comp_name, ng_id)
-        if not current_roi["w"] and not current_roi["h"]:
-            return
 
-        # 加载图像
         for blob_key in ("Component_Image", "HG_Image"):
             blob = comp.get(blob_key)
             if not blob: continue
@@ -554,18 +538,9 @@ class MainWindow(QMainWindow):
                     img = QImage.fromData(bytes(blob))
                 if img.isNull(): continue
 
-                mw = max(self._image_label.width() - 16, 200)
-                mh = max(self._image_label.height() - 16, 100)
-                scaled = img.scaled(mw, mh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                pixmap = QPixmap.fromImage(scaled)
-
-                sx = scaled.width() / img.width() if img.width() else 1
-                sy = scaled.height() / img.height() if img.height() else 1
-
-                # BD001中心=图像中心；其他NG=图像中心+(当前ROI偏移-BD001偏移)
+                # 计算ROI像素坐标
                 img_cx = w / 2.0
                 img_cy = h / 2.0
-
                 if has_bd001 and ng_id != "BD001":
                     dx_mm = current_roi["x"] - bd001_roi["x"]
                     dy_mm = current_roi["y"] - bd001_roi["y"]
@@ -575,27 +550,66 @@ class MainWindow(QMainWindow):
                     cx_px = img_cx + current_roi["x"] * factor
                     cy_px = img_cy + current_roi["y"] * factor
 
-                # 左上角=中心-半宽高
                 rw_px = current_roi["w"] * factor
                 rh_px = current_roi["h"] * factor
+                rx_px = cx_px - rw_px / 2
+                ry_px = cy_px - rh_px / 2
 
-                if rw_px > 0 and rh_px > 0:
-                    painter = QPainter(pixmap)
-                    painter.setPen(QPen(QColor(255, 0, 0), 2))
-                    rx = (cx_px - rw_px / 2) * sx
-                    ry = (cy_px - rh_px / 2) * sy
-                    painter.drawRect(int(rx), int(ry), int(rw_px * sx), int(rh_px * sy))
-                    painter.setPen(QPen(QColor(255, 200, 0), 1))
-                    painter.drawText(int(rx), max(0, int(ry) - 4), f"ROI {ng_id}")
-                    painter.end()
+                # 缩放到视图
+                mw = max(self._image_view.width() - 4, 200)
+                mh = max(self._image_view.height() - 4, 100)
+                scaled = img.scaled(mw, mh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                sx = scaled.width() / img.width() if img.width() else 1
+                sy = scaled.height() / img.height() if img.height() else 1
+                pixmap = QPixmap.fromImage(scaled)
 
-                self._image_label.setPixmap(pixmap)
-                self._image_label.setAlignment(Qt.AlignCenter)
+                # 保存回调参数
+                self._roi_callback_params = {
+                    "comp_name": comp_name, "ng_id": ng_id,
+                    "sx": sx, "sy": sy, "factor": factor,
+                    "img_cx": img_cx, "img_cy": img_cy,
+                    "bd001": bd001_roi if has_bd001 else None,
+                }
+                # 设置交互式ROI视图
+                self._image_view.set_image(
+                    pixmap, img.width(), img.height(),
+                    rx_px * sx if rw_px > 0 else 0,
+                    ry_px * sy if rh_px > 0 else 0,
+                    rw_px * sx if rw_px > 0 else 0,
+                    rh_px * sy if rh_px > 0 else 0)
                 return
             except Exception:
                 continue
 
-        self._image_label.setText("无图像数据")
+    def _on_roi_changed(self, rx, ry, rw, rh):
+        """ROI 拖拽/缩放后，反向计算 mm 坐标并保存"""
+        p = self._roi_callback_params
+        if not p or rw <= 0 or rh <= 0: return
+        comp = p["comp_name"]; ng_id = p["ng_id"]
+        sx = p["sx"]; sy = p["sy"]; factor = p["factor"]
+        img_cx = p["img_cx"]; img_cy = p["img_cy"]; bd001 = p["bd001"]
+
+        # 显示坐标 → 像素
+        px = rx / sx if sx else rx
+        py = ry / sy if sy else ry
+        pw = rw / sx if sx else rw
+        ph = rh / sy if sy else rh
+        # 中心
+        cx_px = px + pw / 2; cy_px = py + ph / 2
+        # 中心 → mm
+        if bd001 and ng_id != "BD001":
+            dx_mm = (cx_px - img_cx) / factor if factor else 0
+            dy_mm = (cy_px - img_cy) / factor if factor else 0
+            roi_x = bd001["x"] + dx_mm
+            roi_y = bd001["y"] + dy_mm
+        else:
+            roi_x = (cx_px - img_cx) / factor if factor else 0
+            roi_y = (cy_px - img_cy) / factor if factor else 0
+        roi_w = pw / factor if factor else pw
+        roi_h = ph / factor if factor else ph
+        # 更新缓存
+        self._db._ng_roi[(comp, ng_id)] = {"x": roi_x, "y": roi_y, "w": roi_w, "h": roi_h, "angle": 0}
+        self._status_label.setText(f"ROI已更新: {ng_id} ({(roi_x)*1000:.0f},{roi_y*1000:.0f})um {roi_w*1000:.0f}x{roi_h*1000:.0f}um")
 
     def _populate_algor_table(self, comp_name: str, ng_id: str):
         """下方算法参数列表: 每行=一个AlgorithmType，参考 RefCompAlgorTable"""

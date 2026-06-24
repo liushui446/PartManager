@@ -146,6 +146,17 @@ class ComponentDatabase:
         """获取NG的ROI信息"""
         return self._ng_roi.get((component_name, ng_id), {"x":0,"y":0,"w":0,"h":0,"angle":0})
 
+    def update_ng_roi(self, component_name: str, ng_id: str,
+                      rx: float, ry: float, rw: float, rh: float):
+        """更新NG的ROI到DB"""
+        with self._connect_rw() as conn:
+            conn.execute("""
+                UPDATE COMPONENT_NG
+                SET Roi_Position_x=?, Roi_Position_y=?, Roi_Width=?, Roi_Height=?
+                WHERE Component_Name=? AND No_Good_Id=?
+            """, (rx, ry, rw, rh, component_name, ng_id))
+            conn.commit()
+
     def get_all_ng_records(self) -> List[Dict[str, Any]]:
         return self._ng_records
 
