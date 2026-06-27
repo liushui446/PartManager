@@ -7,9 +7,9 @@ from typing import Dict, List, Any
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QGroupBox, QLabel, QSlider, QSpinBox, QDoubleSpinBox,
-    QPushButton, QFrame, QCheckBox, QComboBox, QStackedWidget,
+    QPushButton, QFrame, QCheckBox, QComboBox, QStackedWidget
 )
-from PySide6.QtCore import Qt, Signal, QPoint
+from PySide6.QtCore import Qt, Signal, QPoint, QRect
 from PySide6.QtGui import QPainter, QColor, QBrush, QPen, QFont, QPolygon
 
 from ui.range_slider import RangeSlider
@@ -92,13 +92,6 @@ class TriangleWidget(QWidget):
         poly = QPolygon([r_pt, g_pt, b_pt])
         p.drawPolygon(poly)
 
-        # 顶点标签
-        p.setPen(QColor(255, 255, 255))
-        p.setFont(QFont("Microsoft YaHei", 9))
-        p.drawText(QPoint(r_pt.x() - 14, r_pt.y() - 4), "R")
-        p.drawText(QPoint(g_pt.x() - 20, g_pt.y() + 16), "G")
-        p.drawText(QPoint(b_pt.x() + 6, b_pt.y() + 16), "B")
-
         # 选中的颜色区间框（6个点: R低,R高,G低,G高,B低,B高）
         pts = [
             self._hue_to_xy(self._r_lo, w, h, margin, r_pt, g_pt, b_pt),
@@ -108,6 +101,8 @@ class TriangleWidget(QWidget):
             self._hue_to_xy(self._b_lo, w, h, margin, r_pt, g_pt, b_pt),
             self._hue_to_xy(self._b_hi, w, h, margin, r_pt, g_pt, b_pt),
         ]
+
+
         # 计算凸包作为选中区域
         from PySide6.QtGui import QPolygonF
         cx = sum(p.x() for p in pts) / 6
@@ -117,6 +112,30 @@ class TriangleWidget(QWidget):
         p.setPen(QPen(QColor(255, 255, 255), 2))
         p.setBrush(QColor(0, 0, 0, 100))
         p.drawPolygon(poly)
+
+        # 顶点标签
+        # 为每个字母绘制一个带背景的标签
+        label_data = [
+            ("R", r_pt + QPoint(-20, 6)),   # 在顶点正下方一点
+            ("G", g_pt + QPoint(10, -20)),  # 在左下角右上方
+            ("B", b_pt + QPoint(-10, -20))  # 在右下角左上方
+        ]
+
+        for label, pos in label_data:
+            # 获取文字矩形（用于背景和居中）
+            rect = p.fontMetrics().boundingRect(label)
+            # 将矩形中心对齐到 pos
+            text_rect = QRect(
+                pos.x() - rect.width() // 2,
+                pos.y() - rect.height() // 2,
+                rect.width(),
+                rect.height()
+            )
+            # 画半透明黑色背景，让文字在任何颜色下都清晰
+            p.fillRect(text_rect, QColor(0, 0, 0, 160))
+            # 画白色文字
+            p.setPen(QColor(255, 255, 255))
+            p.drawText(text_rect, Qt.AlignCenter, label)
 
         p.end()
 

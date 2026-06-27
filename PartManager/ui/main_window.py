@@ -163,9 +163,16 @@ class MainWindow(QMainWindow):
         layout.addLayout(info_row)
 
         # ── 上方：检测项列表（参考 RefCompoNGTable） ──
+        ng_header_row = QHBoxLayout()
         ng_lbl = QLabel("📋 检测项列表（点击行查看算法参数）")
         ng_lbl.setStyleSheet("font-weight:bold; font-size:12px; color:#58a6ff; padding:1px 4px;")
-        layout.addWidget(ng_lbl)
+        ng_header_row.addWidget(ng_lbl)
+        ng_header_row.addStretch()
+        self._btn_del_ng = QPushButton("🗑 删除NG")
+        self._btn_del_ng.setFixedWidth(70)
+        self._btn_del_ng.setStyleSheet("QPushButton{font-size:10px;padding:2px 6px;}")
+        ng_header_row.addWidget(self._btn_del_ng)
+        layout.addLayout(ng_header_row)
 
         self._ng_table = QTableWidget()
         self._ng_table.setColumnCount(5)
@@ -179,9 +186,16 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._ng_table)
 
         # ── 下方：算法参数列表（参考 RefCompAlgorTable） ──
+        algor_header_row = QHBoxLayout()
         algor_lbl = QLabel("⚙️ 算法参数列表（点击行编辑参数，勾选Use设置默认算法）")
         algor_lbl.setStyleSheet("font-weight:bold; font-size:12px; color:#58a6ff; padding:1px 4px;")
-        layout.addWidget(algor_lbl)
+        algor_header_row.addWidget(algor_lbl)
+        algor_header_row.addStretch()
+        self._btn_del_algo = QPushButton("🗑 删除算法")
+        self._btn_del_algo.setFixedWidth(70)
+        self._btn_del_algo.setStyleSheet("QPushButton{font-size:10px;padding:2px 6px;}")
+        algor_header_row.addWidget(self._btn_del_algo)
+        layout.addLayout(algor_header_row)
 
         self._algor_table = QTableWidget()
         self._algor_table.setColumnCount(10)
@@ -294,6 +308,8 @@ class MainWindow(QMainWindow):
         self._search_input.textChanged.connect(self._on_search)
         self._btn_new_comp.clicked.connect(self._on_new_component)
         self._btn_del_comp.clicked.connect(self._on_delete_component)
+        self._btn_del_ng.clicked.connect(self._on_delete_ng)
+        self._btn_del_algo.clicked.connect(self._on_delete_algo)
         self._btn_new_ng.clicked.connect(self._on_new_ng)
         self._btn_new_algo.clicked.connect(self._on_new_algo)
         self._btn_save_db.clicked.connect(self._save_to_db)
@@ -811,6 +827,54 @@ class MainWindow(QMainWindow):
             self._algor_table.setRowCount(0)
             self._algo_type_badge.setText("")
             self._status_label.setText(f"已删除元件: {name}")
+        except Exception as e:
+            QMessageBox.critical(self, "删除失败", str(e))
+
+    def _on_delete_ng(self):
+        """删除当前选中的检测项(NG)"""
+        row = self._ng_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先在检测项列表中选择一行")
+            return
+        ng_id = self._ng_table.item(row, 1).text()
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除检测项 \"{ng_id}\" 及其所有算法吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            self._db.delete_ng(self._current_component, ng_id)
+            self._populate_ng_table(self._current_component)
+            self._algor_table.setRowCount(0)
+            self._status_label.setText(f"已删除检测项: {ng_id}")
+        except Exception as e:
+            QMessageBox.critical(self, "删除失败", str(e))
+
+    def _on_delete_algo(self):
+        """删除当前算法参数列表中选中的算法"""
+        if not self._current_component:
+            QMessageBox.information(self, "提示", "请先选择元器件")
+            return
+        row = self._algor_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "提示", "请先在算法列表中选择一行")
+            return
+        data = self._algor_table.item(row, 0).data(Qt.UserRole)
+        if not data: return
+        ng_id = data.get("ng_id", "")
+        algo_type = data.get("algo_type", 0)
+        algo_name = self.ALGO_TYPE_NAMES.get(algo_type, str(algo_type))
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定要删除算法 \"{algo_name}\" (NG:{ng_id}) 吗？",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            self._db.delete_algorithm_from_common(self._current_component, ng_id, algo_type)
+            self._populate_algor_table(self._current_component, ng_id)
+            self._status_label.setText(f"已删除算法: {algo_name} ({ng_id})")
         except Exception as e:
             QMessageBox.critical(self, "删除失败", str(e))
 
