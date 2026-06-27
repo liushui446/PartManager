@@ -76,8 +76,8 @@ class MainWindow(QMainWindow):
         # 紧凑摘要 — 直接内嵌在标题行
         self._summary_widgets = {}
         for key, label in [
-            ("component_count", "元器件"), ("ng_record_count", "NG"),
-            ("package_type_count", "封装"), ("algorithm_table_count", "算法"),
+            ("package_type_count", "封装"), ("component_count", "元器件"),
+            ("ng_record_count", "NG"), ("algorithm_table_count", "算法"),
         ]:
             hh = QHBoxLayout()
             hh.setSpacing(3)
