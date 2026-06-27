@@ -395,7 +395,7 @@ class MainWindow(QMainWindow):
             ("封装类型", self.PACKAGE_CN.get(comp.get("PackageType", ""), comp.get("PackageType", ""))),
             ("宽度", f"{comp.get('Component_Width', 0):.4f} mm"),
             ("高度", f"{comp.get('Component_Height', 0):.4f} mm"),
-            ("裁剪区 XY", f"({comp.get('Crop_Area_X', 0):.1f}, {comp.get('Crop_Area_Y', 0):.1f})"),
+            ("搜索范围", f"({comp.get('Crop_Area_X', 0):.1f}, {comp.get('Crop_Area_Y', 0):.1f})"),
             ("裁剪角度", f"{comp.get('Crop_Area_Angle', 0):.2f}°"),
             ("图像尺寸", f"{comp.get('Component_Image_Width', 0):.0f}×{comp.get('Component_Image_Height', 0):.0f} px"),
             ("模板标记", "是 ✓" if comp.get("Template_Flag") else "否"),
@@ -671,10 +671,12 @@ class MainWindow(QMainWindow):
             cb.toggled.connect(lambda checked, r=i, ng=ng_id, at=at:
                                self._on_use_toggled(r, checked, ng))
             self._algor_table.setCellWidget(i, 5, cb)
-            self._algor_table.setItem(i, 6, QTableWidgetItem(str(r.get("Search_Scope_X", ""))))
-            self._algor_table.setItem(i, 7, QTableWidgetItem(str(r.get("Search_Scope_Y", ""))))
-            self._algor_table.setItem(i, 8, QTableWidgetItem("—"))
-            self._algor_table.setItem(i, 9, QTableWidgetItem("—"))
+            # ROI 数据来自 COMPONENT_NG（同NG共享）
+            ng_roi = self._db.get_ng_roi(comp_name, ng_id)
+            self._algor_table.setItem(i, 6, QTableWidgetItem(f"{ng_roi['x']:.3f}"))
+            self._algor_table.setItem(i, 7, QTableWidgetItem(f"{ng_roi['y']:.3f}"))
+            self._algor_table.setItem(i, 8, QTableWidgetItem(f"{ng_roi['w']:.3f}"))
+            self._algor_table.setItem(i, 9, QTableWidgetItem(f"{ng_roi['h']:.3f}"))
             # 存储
             self._algor_table.item(i, 0).setData(Qt.UserRole, {
                 "table": "COMMON_ALGORITHM_PARAMETER",
