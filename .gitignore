@@ -14,5 +14,6 @@ build/
 
 # 导出文件
 *.csv
+*.xlsx
 .reasonix/desktop-topic-title-sources.json
 .reasonix/desktop-topic-titles.json

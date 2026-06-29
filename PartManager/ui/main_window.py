@@ -31,6 +31,10 @@ from ui.editors.pin_editor import PinEditor
 from ui.editors.match_editor import MatchEditor
 from ui.editors.match2_editor import Match2Editor
 from ui.editors.pin_editor import PinEditor
+from ui.editors.ic_editor import IcEditor
+from ui.editors.crest_editor import CrestEditor
+from ui.editors.histogram_editor import HistogramEditor
+from ui.editors.length_editor import LengthEditor
 
 
 class MainWindow(QMainWindow):
@@ -53,7 +57,7 @@ class MainWindow(QMainWindow):
     # ═════════════════════════════════════════════════════════════
 
     def _init_ui(self):
-        self.setWindowTitle("元器件模板库管理系统 v3.0")
+        self.setWindowTitle("元器件模板库管理系统 v1.0")
         self.resize(1520, 920)
         self.setMinimumSize(1100, 680)
 
@@ -215,7 +219,7 @@ class MainWindow(QMainWindow):
         self._btn_del_comp = QPushButton("🗑 删除元件")
         self._btn_save_db = QPushButton("💾 更新数据库")
         self._btn_save_db.setObjectName("btnPrimary")
-        self._btn_export = QPushButton("📊 导出CSV")
+        self._btn_export = QPushButton("📊 导出Excel")
         btn_row.addWidget(self._btn_new_comp)
         btn_row.addWidget(self._btn_del_comp)
         btn_row.addWidget(self._btn_new_ng)
@@ -264,18 +268,18 @@ class MainWindow(QMainWindow):
             "generic": AlgorithmParamEditor,
             1: TocAlgorithmEditor,     # TOC
             2: MatchEditor,            # Match
-            3: AlgorithmParamEditor,   # Histogram
+            3: HistogramEditor,   # Histogram
             4: OcvEditor,              # OCV
             5: AlgorithmParamEditor,   # Compare
             7: AlgorithmParamEditor,   # Glue
-            8: AlgorithmParamEditor,   # Length
+            8: LengthEditor,   # Length
             10: PinEditor,            # PIN
             12: ShortEditor,           # Short
             13: Match2Editor,          # Match2
             14: OtherEditor,           # Other
             15: OffsetEditor,          # ALOffset
-            16: AlgorithmParamEditor,  # Crest
-            19: AlgorithmParamEditor,  # IC
+            16: CrestEditor,           # Crest
+            19: IcEditor,              # IC
         }
         # generic always at index 0
         generic_ed = AlgorithmParamEditor()
@@ -507,10 +511,17 @@ class MainWindow(QMainWindow):
             algo_type = gdata["use_algo"] or 0
             algo_name = self.ALGO_TYPE_NAMES.get(algo_type, str(algo_type))
 
+            # 从 COMPONENT_NG 缓存获取应用模式
+            app_type = "—"
+            for ngr in self._db.get_ng_records(comp_name):
+                if ngr["No_Good_Id"] == ng_id:
+                    app_type = str(ngr.get("Application_Type", "—"))
+                    break
+
             self._ng_table.setItem(i, 0, QTableWidgetItem(defect_cn))
             self._ng_table.setItem(i, 1, QTableWidgetItem(ng_id))
             self._ng_table.setItem(i, 2, QTableWidgetItem("Register"))
-            self._ng_table.setItem(i, 3, QTableWidgetItem("—"))
+            self._ng_table.setItem(i, 3, QTableWidgetItem(app_type))
             self._ng_table.setItem(i, 4, QTableWidgetItem(algo_name))
             # 存储
             self._ng_table.item(i, 0).setData(Qt.UserRole, {
@@ -1028,15 +1039,63 @@ class MainWindow(QMainWindow):
 
     def _export_csv(self):
         from datetime import datetime
-        import csv
+        from openpyxl import Workbook
         try:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            fn = f"元器件模板库_导出_{ts}.csv"
+            fn = f"元器件模板库_导出_{ts}.xlsx"
+            wb = Workbook()
+
+            # ═══ Sheet1: 元器件数据 ═══
+            ws1 = wb.active
+            ws1.title = "元器件数据"
             comps = self._db.get_all_components()
-            with open(fn, "w", newline="", encoding="utf-8-sig") as f:
-                w = csv.DictWriter(f, fieldnames=comps[0].keys())
-                w.writeheader(); w.writerows(comps)
-            QMessageBox.information(self, "导出成功", f"已导出 {len(comps)} 条到:\n{os.path.abspath(fn)}")
+            if comps:
+                # 表头
+                headers = list(comps[0].keys())
+                ws1.append(headers)
+                # 数据
+                for comp in comps:
+                    ws1.append([comp.get(h, "") for h in headers])
+
+            # ═══ Sheet2: 检测项数据 ═══
+            ws2 = wb.create_sheet("检测项数据")
+            ng_records = self._db.get_all_ng_records()
+            if ng_records:
+                headers = list(ng_records[0].keys())
+                ws2.append(headers)
+                for ng in ng_records:
+                    ws2.append([ng.get(h, "") for h in headers])
+
+            # ═══ Sheet3: 算法参数 ═══
+            ws3 = wb.create_sheet("算法参数")
+            algo_tables = self._db.get_algorithm_tables_with_data()
+            all_algo_data = []
+            headers_set = ["算法类型"]
+            for table in algo_tables:
+                schema = self._db.get_algorithm_params_schema(table)
+                col_names = [c["name"] for c in schema]
+                for col in col_names:
+                    if col not in headers_set:
+                        headers_set.append(col)
+                # 获取该表所有元器件的算法参数
+                for comp_name in self._db._algorithm_params[table]:
+                    for row in self._db._algorithm_params[table][comp_name]:
+                        row_copy = {"算法类型": table}
+                        row_copy.update(row)
+                        all_algo_data.append(row_copy)
+
+            if all_algo_data:
+                ws3.append(headers_set)
+                for row in all_algo_data:
+                    ws3.append([row.get(h, "") for h in headers_set])
+
+            # 保存
+            wb.save(fn)
+            total_comps = len(comps)
+            total_ng = len(ng_records)
+            total_algo = len(all_algo_data)
+            msg = f"元器件: {total_comps} 条\n检测项: {total_ng} 条\n算法参数: {total_algo} 条\n\n已导出到:\n{os.path.abspath(fn)}"
+            QMessageBox.information(self, "导出成功", msg)
             self._status_label.setText(f"已导出: {fn}")
         except Exception as e:
             QMessageBox.critical(self, "导出失败", str(e))
